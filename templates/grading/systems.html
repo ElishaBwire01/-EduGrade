@@ -1,0 +1,126 @@
+﻿{% extends "base.html" %}
+{% block title %}Grading Systems — EduGrade{% endblock %}
+{% block page_title %}Grading Systems{% endblock %}
+{% block page_subtitle %}KCSE (8-4-4) and CBC assessment schemes{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h2 class="mb-1">Grading Systems</h2>
+      <p class="text-muted mb-0">Manage KCSE (8-4-4) grade rules and CBC performance levels.</p>
+    </div>
+    <a href="{% url 'grading:process' %}" class="btn btn-primary">
+      <i class="fa-solid fa-calculator me-1"></i>Process Grades
+    </a>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="row g-4">
+
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><i class="fa-solid fa-scale-balanced me-2"></i>Assessment Schemes</div>
+        <div class="card-body p-0">
+          {% if schemes %}
+          <div class="table-responsive">
+            <table class="table mb-0">
+              <thead>
+                <tr><th>Name</th><th>Curriculum</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                {% for scheme in schemes %}
+                <tr>
+                  <td><strong>{{ scheme.name }}</strong></td>
+                  <td>{{ scheme.get_curriculum_display|default:scheme.curriculum }}</td>
+                  <td>
+                    {% if scheme.is_active %}
+                      <span class="badge badge-soft-success">Active</span>
+                    {% else %}
+                      <span class="badge badge-soft-secondary">Inactive</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="eg-empty p-4">
+            <i class="fa-regular fa-folder-open"></i>
+            <p class="mb-0">No assessment schemes configured yet.</p>
+            <small class="text-muted">Run <code>python manage.py seed_grading</code> to create defaults.</small>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><i class="fa-solid fa-list-check me-2"></i>Grading Components</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-6">
+              <div class="stat-card">
+                <div class="stat-ico" style="background:#dbeafe;color:#1e40af">
+                  <i class="fa-solid fa-graduation-cap"></i>
+                </div>
+                <div class="stat-val">{{ kcse_rules_count|default:"0" }}</div>
+                <div class="stat-lbl">KCSE Grade Rules</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="stat-card">
+                <div class="stat-ico" style="background:#dcfce7;color:#166534">
+                  <i class="fa-solid fa-star"></i>
+                </div>
+                <div class="stat-val">{{ performance_levels_count|default:"0" }}</div>
+                <div class="stat-lbl">CBC Performance Levels</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="stat-card">
+                <div class="stat-ico" style="background:#fef3c7;color:#92400e">
+                  <i class="fa-solid fa-table-cells"></i>
+                </div>
+                <div class="stat-val">{{ rubrics_count|default:"0" }}</div>
+                <div class="stat-lbl">CBC Rubrics</div>
+              </div>
+            </div>
+            <div class="col-6">
+              <div class="stat-card">
+                <div class="stat-ico" style="background:#fee2e2;color:#991b1b">
+                  <i class="fa-solid fa-layer-group"></i>
+                </div>
+                <div class="stat-val">{{ components_count|default:"0" }}</div>
+                <div class="stat-lbl">Assessment Components</div>
+              </div>
+            </div>
+          </div>
+          <hr class="my-4">
+          <p class="text-muted small mb-2">
+            <i class="fa-solid fa-info-circle me-1"></i>
+            Grading rules are managed via Django Admin. Click below to open the admin models.
+          </p>
+          {% if user.is_staff %}
+          <a href="/admin/grading/" class="btn btn-outline-primary btn-sm">
+            <i class="fa-solid fa-shield-halved me-1"></i>Manage in Django Admin
+          </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

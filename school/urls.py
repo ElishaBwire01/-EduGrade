@@ -5,6 +5,9 @@ from . import setup_views
 app_name = 'school'
 
 urlpatterns = [
+    path('schemes/', views.scheme_list, name='scheme_list'),
+    path('schemes/<int:scheme_id>/', views.scheme_detail, name='scheme_detail'),
+    path('coverage/', views.coverage_dashboard, name='coverage_dashboard'),
     # Original school structure
     path('structure/', views.school_structure, name='structure'),
     
@@ -46,3 +49,4 @@ urlpatterns = [
     path('api/grade-levels/', setup_views.api_get_grade_levels, name='api_grade_levels'),
     path('api/streams/', setup_views.api_get_streams, name='api_streams'),
 ]
+

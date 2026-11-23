@@ -7,7 +7,8 @@ from django.db import transaction
 from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
 from students.models import Student
 from students.views import _record_current_placement
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from .services import bulk_reallocate_students, reallocate_and_delete
 
 @login_required
@@ -788,3 +789,4 @@ def _legacy_stream_delete(request, stream_id):
         'student_count': student_count,
     }
     return render(request, 'school/stream_reallocate.html', context)
+

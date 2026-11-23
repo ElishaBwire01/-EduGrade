@@ -1,0 +1,694 @@
+
+import csv
+from pathlib import Path
+
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
+
+from school.models import (
+    Curriculum, CurriculumVersion, GradeLevel, LearningArea,
+    Strand, SubStrand, LearningOutcome, LearningExperience,
+    InquiryQuestion, CoreCompetency, CoreValue, PCI,
+)
+
+
+REQUIRED_COLUMNS = {
+    "curriculum",
+    "grade",
+    "learning_area_code",
+    "learning_area_name",
+    "strand",
+    "sub_strand",
+    "outcome",
+}
+
+DETAIL_FIELDS = (
+    "knowledge",
+    "skills",
+    "attitudes",
+    "values_text",
+)
+
+OPTIONAL_ORDER_FIELDS = (
+    "learning_area_order",
+    "strand_order",
+    "sub_strand_order",
+    "outcome_order",
+    "experience_order",
+    "inquiry_order",
+)
+
+REFERENCE_FIELDS = {
+    "competencies": (CoreCompetency, "competency"),
+    "values": (CoreValue, "value"),
+    "pcis": (PCI, "PCI"),
+}
+
+
+class Command(BaseCommand):
+    help = "Safely import KICD curriculum content from CSV."
+
+    def add_arguments(self, parser):
+        parser.add_argument("csv_path", type=str)
+
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Validate and preview without writing.",
+        )
+        parser.add_argument(
+            "--validate-only",
+            action="store_true",
+            help="Validate CSV and database references only.",
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help="Treat unknown reference codes as errors.",
+        )
+        parser.add_argument(
+            "--update-existing",
+            action="store_true",
+            help="Allow updates to existing curriculum records.",
+        )
+        parser.add_argument(
+            "--curriculum-version",
+            type=str,
+            default=None,
+            help="Explicit curriculum version code.",
+        )
+        parser.add_argument(
+            "--no-rollback",
+            action="store_true",
+            help=(
+                "Deprecated compatibility option. "
+                "Imports remain transactional."
+            ),
+        )
+
+    def _load_csv(self, path):
+        file_path = Path(path)
+
+        if not file_path.is_file():
+            raise CommandError(f"CSV file not found: {path}")
+
+        with file_path.open(
+            "r", encoding="utf-8-sig", newline=""
+        ) as file:
+            reader = csv.DictReader(file)
+
+            if not reader.fieldnames:
+                raise CommandError("CSV has no header row.")
+
+            headers = {
+                str(header).strip()
+                for header in reader.fieldnames
+                if header
+            }
+
+            missing = REQUIRED_COLUMNS - headers
+
+            if missing:
+                raise CommandError(
+                    f"Missing required columns: {sorted(missing)}"
+                )
+
+            rows = []
+
+            for line_number, raw_row in enumerate(reader, start=2):
+                row = {
+                    str(key).strip(): (
+                        value.strip() if isinstance(value, str) else value
+                    )
+                    for key, value in raw_row.items()
+                    if key is not None
+                }
+
+                row["_line"] = line_number
+                rows.append(row)
+
+        if not rows:
+            raise CommandError("CSV contains no data rows.")
+
+        return rows
+
+    @staticmethod
+    def _parse_order(row, field, default):
+        value = row.get(field, "")
+
+        if value == "":
+            return default
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{field} must be an integer; received {value!r}"
+            )
+
+    def _resolve_version(self, rows, version_code):
+        curriculum_codes = {
+            row.get("curriculum", "").strip()
+            for row in rows
+        }
+
+        if "" in curriculum_codes:
+            raise CommandError(
+                "Every row must specify its curriculum code."
+            )
+
+        if len(curriculum_codes) != 1:
+            raise CommandError(
+                "A single CSV import must contain exactly one curriculum."
+            )
+
+        curriculum_code = next(iter(curriculum_codes))
+
+        try:
+            curriculum = Curriculum.objects.get(
+                code=curriculum_code
+            )
+        except Curriculum.DoesNotExist:
+            raise CommandError(
+                f"Curriculum {curriculum_code!r} does not exist."
+            )
+
+        if version_code:
+            try:
+                version = CurriculumVersion.objects.get(
+                    curriculum=curriculum,
+                    version_code=version_code,
+                )
+            except CurriculumVersion.DoesNotExist:
+                raise CommandError(
+                    f"Version {version_code!r} does not exist "
+                    f"under curriculum {curriculum_code!r}."
+                )
+        else:
+            current_versions = CurriculumVersion.objects.filter(
+                curriculum=curriculum,
+                is_current=True,
+                is_active=True,
+            )
+
+            if current_versions.count() != 1:
+                raise CommandError(
+                    f"Expected exactly one active current version "
+                    f"for {curriculum_code}; found "
+                    f"{current_versions.count()}. "
+                    "Specify --curriculum-version."
+                )
+
+            version = current_versions.get()
+
+        if version.curriculum_id != curriculum.id:
+            raise CommandError(
+                "Selected version does not belong to the CSV curriculum."
+            )
+
+        return curriculum, version
+
+    def _validate_rows(self, rows, curriculum, version):
+        errors = []
+        warnings = []
+
+        grade_cache = {
+            (grade.curriculum_id, grade.name): grade
+            for grade in GradeLevel.objects.filter(
+                curriculum=curriculum
+            )
+        }
+
+        reference_cache = {}
+
+        for field, (model, label) in REFERENCE_FIELDS.items():
+            reference_cache[field] = {
+                code: pk
+                for code, pk in model.objects.values_list(
+                    "code", "id"
+                )
+            }
+
+        seen_areas = set()
+        seen_strands = set()
+        seen_substrands = set()
+        seen_outcomes = set()
+
+        for row in rows:
+            line = row["_line"]
+
+            try:
+                grade_name = row.get("grade", "").strip()
+
+                if not grade_name:
+                    raise ValueError("grade column is empty")
+
+                grade = grade_cache.get(
+                    (curriculum.id, grade_name)
+                )
+
+                if grade is None:
+                    raise ValueError(
+                        f"Grade {grade_name!r} does not exist "
+                        f"under {curriculum.code}."
+                    )
+
+                if not row.get("learning_area_code"):
+                    raise ValueError("learning_area_code is empty")
+
+                if not row.get("learning_area_name"):
+                    raise ValueError("learning_area_name is empty")
+
+                if not row.get("strand"):
+                    raise ValueError("strand is empty")
+
+                if not row.get("sub_strand"):
+                    raise ValueError("sub_strand is empty")
+
+                if not row.get("outcome"):
+                    raise ValueError("outcome is empty")
+
+                if len(row.get("inquiry", "")) > 400:
+                    raise ValueError(
+                        "Inquiry question exceeds 400 characters."
+                    )
+
+                for field in OPTIONAL_ORDER_FIELDS:
+                    self._parse_order(row, field, 0)
+
+                area_key = (
+                    version.id,
+                    grade.id,
+                    row["learning_area_code"],
+                )
+
+                strand_key = (
+                    area_key,
+                    row["strand"],
+                )
+
+                substrand_key = (
+                    strand_key,
+                    row["sub_strand"],
+                )
+
+                outcome_key = (
+                    substrand_key,
+                    row["outcome"],
+                )
+
+                # Detect conflicting duplicate definitions in one CSV.
+                if area_key in seen_areas:
+                    pass
+                seen_areas.add(area_key)
+
+                seen_strands.add(strand_key)
+                seen_substrands.add(substrand_key)
+                seen_outcomes.add(outcome_key)
+
+                for field, (model, label) in REFERENCE_FIELDS.items():
+                    codes = [
+                        code.strip()
+                        for code in row.get(field, "").split(";")
+                        if code.strip()
+                    ]
+
+                    if len(codes) != len(set(codes)):
+                        warnings.append(
+                            f"line {line}: duplicate {label} codes "
+                            f"in {field}."
+                        )
+
+                    for code in dict.fromkeys(codes):
+                        if code not in reference_cache[field]:
+                            message = (
+                                f"line {line}: {label} code "
+                                f"{code!r} does not exist."
+                            )
+
+                            if self.strict:
+                                errors.append(message)
+                            else:
+                                warnings.append(message)
+
+            except (ValueError, TypeError) as exc:
+                errors.append(f"line {line}: {exc}")
+
+        # Check existing hierarchy for ambiguous matches.
+        for label, model, filters in (
+            (
+                "LearningArea",
+                LearningArea,
+                None,
+            ),
+        ):
+            if filters is not None:
+                continue
+
+        return errors, warnings
+
+    def _reference_objects(self, row):
+        resolved = {}
+
+        for field, (model, label) in REFERENCE_FIELDS.items():
+            objects = []
+
+            codes = [
+                code.strip()
+                for code in row.get(field, "").split(";")
+                if code.strip()
+            ]
+
+            for code in dict.fromkeys(codes):
+                obj = model.objects.filter(code=code).first()
+
+                if obj is not None:
+                    objects.append(obj)
+
+            resolved[field] = objects
+
+        return resolved
+
+    @staticmethod
+    def _update_fields(obj, values):
+        changed = []
+
+        for field, value in values.items():
+            if value is None or value == "":
+                continue
+
+            if getattr(obj, field) != value:
+                setattr(obj, field, value)
+                changed.append(field)
+
+        if changed:
+            obj.save(update_fields=changed)
+
+    def _import_rows(self, rows, version, update_existing):
+        stats = {
+            "learning_areas_created": 0,
+            "strands_created": 0,
+            "substrands_created": 0,
+            "outcomes_created": 0,
+            "experiences_created": 0,
+            "inquiries_created": 0,
+            "records_updated": 0,
+        }
+
+        for row in rows:
+            grade = GradeLevel.objects.get(
+                curriculum=version.curriculum,
+                name=row["grade"],
+            )
+
+            area, created = LearningArea.objects.get_or_create(
+                curriculum_version=version,
+                grade_level=grade,
+                code=row["learning_area_code"],
+                defaults={
+                    "name": row["learning_area_name"],
+                    "is_core": True,
+                    "is_active": True,
+                    "order": self._parse_order(
+                        row, "learning_area_order", 0
+                    ),
+                },
+            )
+
+            if created:
+                stats["learning_areas_created"] += 1
+            elif update_existing:
+                before = area.name
+                self._update_fields(
+                    area,
+                    {
+                        "name": row["learning_area_name"],
+                        "order": self._parse_order(
+                            row, "learning_area_order", area.order
+                        ),
+                    },
+                )
+                if area.name != before:
+                    stats["records_updated"] += 1
+
+            strand, created = Strand.objects.get_or_create(
+                learning_area=area,
+                name=row["strand"],
+                defaults={
+                    "code": row.get("strand_code") or None,
+                    "order": self._parse_order(
+                        row, "strand_order", 0
+                    ),
+                    "is_active": True,
+                },
+            )
+
+            if created:
+                stats["strands_created"] += 1
+            elif update_existing:
+                old = (strand.code, strand.order)
+                self._update_fields(
+                    strand,
+                    {
+                        "code": row.get("strand_code"),
+                        "order": self._parse_order(
+                            row, "strand_order", strand.order
+                        ),
+                    },
+                )
+                if old != (strand.code, strand.order):
+                    stats["records_updated"] += 1
+
+            substrand, created = SubStrand.objects.get_or_create(
+                strand=strand,
+                name=row["sub_strand"],
+                defaults={
+                    "code": row.get("sub_strand_code") or None,
+                    "order": self._parse_order(
+                        row, "sub_strand_order", 0
+                    ),
+                    "is_active": True,
+                },
+            )
+
+            if created:
+                stats["substrands_created"] += 1
+            elif update_existing:
+                old = (substrand.code, substrand.order)
+                self._update_fields(
+                    substrand,
+                    {
+                        "code": row.get("sub_strand_code"),
+                        "order": self._parse_order(
+                            row, "sub_strand_order", substrand.order
+                        ),
+                    },
+                )
+                if old != (substrand.code, substrand.order):
+                    stats["records_updated"] += 1
+
+            outcome, created = LearningOutcome.objects.get_or_create(
+                sub_strand=substrand,
+                outcome_text=row["outcome"],
+                defaults={
+                    "order": self._parse_order(
+                        row, "outcome_order", 0
+                    ),
+                    "knowledge": row.get("knowledge") or None,
+                    "skills": row.get("skills") or None,
+                    "attitudes": row.get("attitudes") or None,
+                    "values_text": row.get("values_text") or None,
+                    "is_active": True,
+                },
+            )
+
+            if created:
+                stats["outcomes_created"] += 1
+            elif update_existing:
+                old_values = tuple(
+                    getattr(outcome, field)
+                    for field in DETAIL_FIELDS
+                )
+
+                self._update_fields(
+                    outcome,
+                    {
+                        field: row.get(field)
+                        for field in DETAIL_FIELDS
+                    } | {
+                        "order": self._parse_order(
+                            row, "outcome_order", outcome.order
+                        )
+                    },
+                )
+
+                new_values = tuple(
+                    getattr(outcome, field)
+                    for field in DETAIL_FIELDS
+                )
+
+                if old_values != new_values:
+                    stats["records_updated"] += 1
+
+            references = self._reference_objects(row)
+
+            # Nonempty CSV reference columns replace relationships
+            # only when --update-existing is explicitly supplied.
+            if created or update_existing:
+                for field, objects in references.items():
+                    if row.get(field, "").strip():
+                        manager_name = {
+                            "competencies": "competencies",
+                            "values": "core_values",
+                            "pcis": "pcis",
+                        }[field]
+
+                        getattr(outcome, manager_name).set(objects)
+
+            experience = row.get("experience", "")
+
+            if experience:
+                exp, exp_created = (
+                    LearningExperience.objects.get_or_create(
+                        learning_outcome=outcome,
+                        experience_text=experience,
+                        defaults={
+                            "order": self._parse_order(
+                                row, "experience_order", 0
+                            ),
+                            "resources_needed": (
+                                row.get("resources_needed") or None
+                            ),
+                            "is_active": True,
+                        },
+                    )
+                )
+
+                if exp_created:
+                    stats["experiences_created"] += 1
+                elif update_existing:
+                    self._update_fields(
+                        exp,
+                        {
+                            "order": self._parse_order(
+                                row, "experience_order", exp.order
+                            ),
+                            "resources_needed": row.get(
+                                "resources_needed"
+                            ),
+                        },
+                    )
+
+            inquiry = row.get("inquiry", "")
+
+            if inquiry:
+                question, inquiry_created = (
+                    InquiryQuestion.objects.get_or_create(
+                        learning_outcome=outcome,
+                        question_text=inquiry,
+                        defaults={
+                            "order": self._parse_order(
+                                row, "inquiry_order", 0
+                            ),
+                            "is_active": True,
+                        },
+                    )
+                )
+
+                if inquiry_created:
+                    stats["inquiries_created"] += 1
+                elif update_existing:
+                    self._update_fields(
+                        question,
+                        {
+                            "order": self._parse_order(
+                                row, "inquiry_order", question.order
+                            )
+                        },
+                    )
+
+        return stats
+
+    def handle(self, *args, **options):
+        rows = self._load_csv(options["csv_path"])
+
+        curriculum, version = self._resolve_version(
+            rows,
+            options["curriculum_version"],
+        )
+
+        errors, warnings = self._validate_rows(
+            rows, curriculum, version
+        )
+
+        self.stdout.write(
+            f"Loaded {len(rows)} rows."
+        )
+        self.stdout.write(
+            f"Curriculum: {curriculum.code}"
+        )
+        self.stdout.write(
+            f"Version: {version.version_code}"
+        )
+
+        for warning in warnings:
+            self.stdout.write(self.style.WARNING(warning))
+
+        if errors:
+            for error in errors:
+                self.stdout.write(self.style.ERROR(error))
+
+            raise CommandError(
+                f"Validation failed with {len(errors)} error(s). "
+                "No records were imported."
+            )
+
+        self.stdout.write(
+            self.style.SUCCESS("CSV and reference validation passed.")
+        )
+
+        if options["validate_only"]:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    "VALIDATION ONLY: database unchanged."
+                )
+            )
+            return
+
+        if options["dry_run"]:
+            self.stdout.write(
+                self.style.WARNING(
+                    "DRY RUN: validation passed; no database writes."
+                )
+            )
+            return
+
+        if options["no_rollback"]:
+            self.stdout.write(
+                self.style.WARNING(
+                    "--no-rollback is deprecated. "
+                    "The import will remain transactional."
+                )
+            )
+
+        try:
+            with transaction.atomic():
+                stats = self._import_rows(
+                    rows,
+                    version,
+                    options["update_existing"],
+                )
+        except Exception as exc:
+            raise CommandError(
+                f"Import failed and was rolled back: {exc}"
+            ) from exc
+
+        self.stdout.write("")
+        self.stdout.write("IMPORT SUMMARY")
+
+        for key, value in stats.items():
+            self.stdout.write(f"{key}: {value}")
+
+        self.stdout.write(
+            self.style.SUCCESS("Import completed successfully.")
+        )

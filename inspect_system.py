@@ -6,7 +6,8 @@ django.setup()
 from django.apps import apps
 from django.db import connection
 from django.urls import get_resolver
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 import inspect
 
 print("=" * 80)
@@ -662,3 +663,4 @@ print("""
 """)
 
 print("=" * 80)
+

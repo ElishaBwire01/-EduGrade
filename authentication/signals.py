@@ -1,6 +1,7 @@
-from django.contrib.auth.signals import user_logged_in
+﻿from django.contrib.auth.signals import user_logged_in
 from django.dispatch import receiver
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from core.access import send_notification, send_approval_reminder
 
 
@@ -22,3 +23,4 @@ def on_user_logged_in(sender, request, user, **kwargs):
             url="/teachers/request-approval/",
         )
         send_approval_reminder(user)
+

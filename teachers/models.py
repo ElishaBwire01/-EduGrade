@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from django.utils import timezone
 from school.models import Subject, GradeLevel, Stream, AcademicYear, Curriculum, Term
 
@@ -242,3 +243,4 @@ class ClassTeacherRequest(models.Model):
     class Meta:
         db_table = 'class_teacher_requests'
         ordering = ['-requested_at']
+

@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
 
 class Examination(models.Model):
@@ -97,3 +98,4 @@ class SubjectScoreConfig(models.Model):
     class Meta:
         db_table = 'subject_score_configs'
         unique_together = ['examination', 'subject']
+

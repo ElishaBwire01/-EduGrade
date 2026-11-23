@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from school.models import Curriculum, GradeLevel, Subject, AcademicYear, Term
 from students.models import Student
 from examinations.models import Examination
@@ -318,6 +319,7 @@ class StudentCBAAssessment(models.Model):
     examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name='cbc_assessments')
     rubric = models.ForeignKey(Rubric, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+    learning_outcome = models.ForeignKey('school.LearningOutcome', on_delete=models.SET_NULL, null=True, blank=True, related_name='cba_assessments')
     
     # Results per criterion
     criterion_results = models.JSONField(default=dict)
@@ -372,3 +374,156 @@ class StudentOverallCBA(models.Model):
     class Meta:
         db_table = 'student_overall_cba'
         unique_together = ['student', 'examination']
+
+
+# ============================================================
+# PHASE 3: ASSESSMENT EVIDENCE LAYER
+# Adds discrete tasks, evidence files, observations, feedback.
+# Links existing StudentCBAAssessment to LearningOutcome.
+# ============================================================
+
+class AssessmentTask(models.Model):
+    """A discrete assessment task created by a teacher.
+
+    Examples: "Classroom measurement exercise", "Oral reading",
+    "Group project on water cycle".
+    """
+    TASK_TYPES = [
+        ('OBSERVATION', 'Observation'),
+        ('ORAL', 'Oral Assessment'),
+        ('WRITTEN', 'Written Assessment'),
+        ('PRACTICAL', 'Practical Assessment'),
+        ('PROJECT', 'Project'),
+        ('GROUP', 'Group Activity'),
+        ('EXPERIMENT', 'Experiment'),
+        ('PORTFOLIO', 'Portfolio'),
+        ('PERFORMANCE', 'Performance'),
+        ('PRESENTATION', 'Presentation'),
+        ('PEER', 'Peer Assessment'),
+        ('SELF', 'Self Assessment'),
+    ]
+    name = models.CharField(max_length=250)
+    description = models.TextField(blank=True, null=True)
+    task_type = models.CharField(max_length=20, choices=TASK_TYPES, default='OBSERVATION')
+    scheme = models.ForeignKey(AssessmentScheme, on_delete=models.CASCADE, related_name='tasks')
+    learning_outcome = models.ForeignKey(
+        'school.LearningOutcome', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='assessment_tasks'
+    )
+    rubric = models.ForeignKey(
+        Rubric, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='tasks'
+    )
+    subject = models.ForeignKey('school.Subject', on_delete=models.SET_NULL, null=True, blank=True)
+    grade_level = models.ForeignKey('school.GradeLevel', on_delete=models.SET_NULL, null=True, blank=True)
+    academic_year = models.ForeignKey('school.AcademicYear', on_delete=models.SET_NULL, null=True, blank=True)
+    term = models.ForeignKey('school.Term', on_delete=models.SET_NULL, null=True, blank=True)
+    assessment_date = models.DateField()
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='created_assessment_tasks')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'assessment_tasks'
+        ordering = ['-assessment_date', 'name']
+
+    def __str__(self):
+        return f'{self.name} ({self.assessment_date})'
+
+
+class AssessmentEvidence(models.Model):
+    """A piece of evidence (file, photo, video, doc) attached to a
+    StudentCBAAssessment record. Optionally linked to a specific
+    LearningOutcome for traceability.
+    """
+    EVIDENCE_TYPES = [
+        ('PHOTO', 'Photograph'),
+        ('VIDEO', 'Video'),
+        ('DOCUMENT', 'Document'),
+        ('AUDIO', 'Audio'),
+        ('OTHER', 'Other'),
+    ]
+    student_assessment = models.ForeignKey(
+        StudentCBAAssessment, on_delete=models.CASCADE,
+        related_name='evidence_items'
+    )
+    evidence_type = models.CharField(max_length=20, choices=EVIDENCE_TYPES, default='PHOTO')
+    file = models.FileField(upload_to='evidence/%Y/%m/')
+    caption = models.CharField(max_length=300, blank=True, null=True)
+    learning_outcome = models.ForeignKey(
+        'school.LearningOutcome', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='evidence_items'
+    )
+    uploaded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='uploaded_evidence')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'assessment_evidence'
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f'{self.get_evidence_type_display()} - {self.caption or self.file.name}'
+
+
+class TeacherObservation(models.Model):
+    """A qualitative observation about a learner's progress on a
+    specific learning outcome. This is NOT converted into a mark —
+    it captures the evidence of learning per CBC guidance.
+    """
+    OBSERVATION_TYPES = [
+        ('STRENGTH', 'Strength Observed'),
+        ('PROGRESS', 'Progress Noted'),
+        ('CONCERN', 'Concern Noted'),
+        ('NEUTRAL', 'Neutral Observation'),
+    ]
+    student = models.ForeignKey('students.Student', on_delete=models.CASCADE, related_name='observations')
+    learning_outcome = models.ForeignKey(
+        'school.LearningOutcome', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='observations'
+    )
+    observation_type = models.CharField(max_length=20, choices=OBSERVATION_TYPES, default='NEUTRAL')
+    observation_text = models.TextField()
+    observed_on = models.DateField()
+    recorded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='recorded_observations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'teacher_observations'
+        ordering = ['-observed_on', '-created_at']
+
+    def __str__(self):
+        return f'{self.get_observation_type_display()} — {self.student.full_name if hasattr(self.student, "full_name") else self.student}'
+
+
+class LearnerFeedback(models.Model):
+    """Feedback given to a learner about an assessment — separate
+    from the score/grade. Can be shown on reports.
+    """
+    FEEDBACK_TYPES = [
+        ('GENERAL', 'General Feedback'),
+        ('IMPROVEMENT', 'Area for Improvement'),
+        ('SUPPORT', 'Recommended Support'),
+        ('PRAISE', 'Recognition / Praise'),
+    ]
+    student = models.ForeignKey('students.Student', on_delete=models.CASCADE, related_name='feedback_items')
+    student_assessment = models.ForeignKey(
+        StudentCBAAssessment, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='feedback_items'
+    )
+    feedback_type = models.CharField(max_length=20, choices=FEEDBACK_TYPES, default='GENERAL')
+    feedback_text = models.TextField()
+    given_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='given_feedback')
+    given_on = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'learner_feedback'
+        ordering = ['-given_on', '-created_at']
+
+    def __str__(self):
+        return f'{self.get_feedback_type_display()} — {self.feedback_text[:60]}'
+

@@ -6,6 +6,8 @@
 {% block page_subtitle %}View student information and academic history{% endblock %}
 
 {% block content %}
+<div class="mb-3 no-print"><a href="{% url 'students:portfolio' student.id %}" class="btn btn-primary"><i class="fa-solid fa-folder-open me-1"></i>View Portfolio</a></div>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <a href="{% url 'students:list' %}" class="btn btn-outline-secondary btn-sm mb-2">
@@ -218,4 +220,5 @@
 </script>
 {% endif %}
 {% endblock %}
+
 

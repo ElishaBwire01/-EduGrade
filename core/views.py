@@ -1,9 +1,15 @@
 ﻿from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import get_user_model
 from django.views.generic import TemplateView
+from django.contrib.auth import get_user_model
 from django.http import JsonResponse
+from django.contrib.auth import get_user_model
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.contrib.auth import get_user_model
 from students.models import Student
 from teachers.models import TeacherProfile
 from teachers.models import ClassTeacher
@@ -11,6 +17,8 @@ from examinations.models import Examination
 from marks.models import MarkEntry
 from core.access import is_admin, class_teacher_assignments
 from core.models import Notification
+
+User = get_user_model()
 
 try:
     from grading.models import StudentKCSEGrade, StudentCBAAssessment, StudentOverallCBA
@@ -279,3 +287,4 @@ def unread_notification_count(user):
     if not user.is_authenticated:
         return 0
     return user.notifications.filter(is_read=False).count()
+

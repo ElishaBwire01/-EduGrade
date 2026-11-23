@@ -15,7 +15,7 @@ SECRET_KEY = 'django-insecure-your-secret-key-here-change-in-production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
 
 # Application definition
 INSTALLED_APPS = [
@@ -32,10 +32,10 @@ INSTALLED_APPS = [
     # Custom apps
     'authentication.apps.AuthenticationConfig',
     'core',
-    'users',
     'school',
     'students',
     'teachers',
+    'senior_school.apps.SeniorSchoolConfig',
 ]
 
 MIDDLEWARE = [
@@ -73,10 +73,11 @@ WSGI_APPLICATION = 'edugrade.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': r'C:\Users\CMC BANGLADESH\Documents\edugrade_db.sqlite3',
-        'OPTIONS': {
-            'timeout': 30,
-        },
+        'NAME': os.environ.get(
+            'EDUGRADE_DB',
+            str(BASE_DIR / 'edugrade_db.sqlite3')
+        ),
+        'OPTIONS': {'timeout': 60},
     }
 }
 
@@ -121,6 +122,10 @@ LOGOUT_REDIRECT_URL = 'authentication:login'
 
 # Custom user model - we'll extend this later
 # AUTH_USER_MODEL = 'users.CustomUser'
+
+
+
+
 
 
 

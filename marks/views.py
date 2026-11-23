@@ -1,20 +1,31 @@
 ﻿from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.contrib.auth import get_user_model
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.http import JsonResponse, HttpResponse
+from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.contrib.auth import get_user_model
 from django.core.paginator import Paginator
+from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 from datetime import datetime
+from django.utils import timezone
 from .models import MarkEntry, MarkSubmission, MarkCorrection
 from examinations.models import Examination
 from school.models import Subject, GradeLevel, Stream
 from students.models import Student
 from teachers.models import TeacherProfile
 from core.access import is_admin
+from core.access import assert_exam_editable
 from core.models import AuditLog
 from core.access import send_notification
 from grading.services import recalculate_for_mark_change
+
+User = get_user_model()
 
 
 def _is_admin_user(user):
@@ -108,6 +119,12 @@ def mark_entry(request):
         
         if exam_id and subject_id and grade_level_id and stream_id:
             exam = get_object_or_404(Examination, id=exam_id)
+            from core.access import assert_exam_editable as _ae
+            try:
+                _ae(exam, request.user)
+            except Exception as _e:
+                messages.error(request, str(_e))
+                return redirect('marks:entry')
             subject = get_object_or_404(Subject, id=subject_id)
             grade_level = get_object_or_404(GradeLevel, id=grade_level_id)
             stream = get_object_or_404(Stream, id=stream_id)
@@ -161,13 +178,13 @@ def mark_entry(request):
                 defaults={
                     'status': 'SUBMITTED',
                     'submitted_by': request.user,
-                    'submitted_at': datetime.now()
+                    'submitted_at': timezone.now()
                 }
             )
             if not created:
                 submission.status = 'SUBMITTED'
                 submission.submitted_by = request.user
-                submission.submitted_at = datetime.now()
+                submission.submitted_at = timezone.now()
                 submission.save()
             
             messages.success(request, 'Marks saved successfully!')
@@ -283,7 +300,7 @@ def mark_correction(request):
             if action == 'approve':
                 correction.status = 'APPROVED'
                 correction.approved_by = request.user
-                correction.approved_at = datetime.now()
+                correction.approved_at = timezone.now()
                 correction.admin_notes = admin_notes
                 
                 # Update the mark
@@ -321,7 +338,7 @@ def mark_correction(request):
             elif action == 'reject':
                 correction.status = 'REJECTED'
                 correction.approved_by = request.user
-                correction.approved_at = datetime.now()
+                correction.approved_at = timezone.now()
                 correction.admin_notes = admin_notes
                 messages.warning(request, 'Correction rejected!')
             
@@ -558,3 +575,148 @@ def api_get_classes(request):
         return JsonResponse({'classes': classes})
     except TeacherProfile.DoesNotExist:
         return JsonResponse({'classes': []})
+
+
+# ============================================================
+# ADMIN: create / upsert a mark for ANY student x exam x subject
+# ============================================================
+@login_required
+@user_passes_test(_is_admin_user)
+def admin_mark_create(request):
+    """Admin: create or overwrite a mark for ANY student x exam x subject.
+
+    Does NOT require a TeacherProfile. The MarkEntry inherits the student's
+    CURRENT grade_level / stream placement (same as mark_entry).
+    One mark per (student, exam, subject) enforced by unique_together,
+    so this view upserts.
+    """
+    # ---- POST: create or update ----
+    if request.method == 'POST':
+        student_id  = request.POST.get('student_id')
+        exam_id     = request.POST.get('examination_id')
+        subject_id  = request.POST.get('subject_id')
+        score_str   = request.POST.get('score')
+        status      = request.POST.get('status', 'DRAFT')
+        reason      = (request.POST.get('reason') or '').strip()
+        recalculate = request.POST.get('recalculate') == 'on'
+
+        if not (student_id and exam_id and subject_id and score_str):
+            messages.error(request, 'Student, examination, subject and score are required.')
+            return redirect('marks:admin_mark_create')
+
+        student = get_object_or_404(Student, id=student_id)
+        exam    = get_object_or_404(Examination, id=exam_id)
+        from core.access import assert_exam_editable as _ae
+        try:
+            _ae(exam, request.user)
+        except Exception as _e:
+            messages.error(request, str(_e))
+            return redirect('marks:admin_mark_create')
+        subject = get_object_or_404(Subject, id=subject_id)
+
+        # Subject must belong to the examination
+        if not exam.subjects.filter(id=subject.id).exists():
+            messages.error(request, 'That subject is not part of the selected examination.')
+            return redirect('marks:admin_mark_create')
+
+        try:
+            score = float(score_str)
+            if not (0 <= score <= 100):
+                raise ValueError
+        except (TypeError, ValueError):
+            messages.error(request, 'Score must be a number between 0 and 100.')
+            return redirect('marks:admin_mark_create')
+
+        grade_level = student.current_grade_level
+        stream      = student.current_stream
+        if not grade_level or not stream:
+            messages.error(request, 'Student has no current grade / stream placement.')
+            return redirect('marks:admin_mark_create')
+
+        existing = MarkEntry.objects.filter(
+            student=student, examination=exam, subject=subject
+        ).first()
+
+        if existing:
+            if not reason:
+                messages.error(request, 'A reason is required when overwriting an existing mark.')
+                return redirect('marks:admin_mark_create')
+            old = existing.score
+            existing.score       = score
+            existing.status      = status
+            existing.grade_level = grade_level
+            existing.stream      = stream
+            existing.updated_by  = request.user
+            existing.save()
+            AuditLog.objects.create(
+                user=request.user, action='UPDATE',
+                model_name='MarkEntry', object_id=str(existing.id),
+                object_repr=str(existing),
+                changes={'old_score': str(old), 'new_score': str(score), 'reason': reason},
+                ip_address=request.META.get('REMOTE_ADDR', ''),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
+            messages.success(
+                request,
+                f'Mark updated: {student.full_name} — {subject.name}: {old} -> {score}'
+            )
+        else:
+            existing = MarkEntry.objects.create(
+                student=student, examination=exam, subject=subject,
+                grade_level=grade_level, stream=stream,
+                score=score, status=status,
+                entered_by=request.user, updated_by=request.user,
+            )
+            AuditLog.objects.create(
+                user=request.user, action='CREATE',
+                model_name='MarkEntry', object_id=str(existing.id),
+                object_repr=str(existing),
+                changes={'score': str(score), 'reason': reason or 'admin created'},
+                ip_address=request.META.get('REMOTE_ADDR', ''),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
+            messages.success(
+                request,
+                f'Mark created: {student.full_name} — {subject.name}: {score}'
+            )
+
+        if recalculate:
+            try:
+                recalculate_for_mark_change(existing)
+            except Exception:
+                pass
+
+        return redirect('marks:admin_mark_create')
+
+    # ---- GET: render form ----
+    students = (Student.objects
+                .filter(is_active=True)
+                .select_related('current_grade_level', 'current_stream')
+                .order_by('admission_number')[:2000])
+    examinations = (Examination.objects
+                    .select_related('academic_year', 'grade_level', 'curriculum')
+                    .order_by('-start_date'))
+    subjects = Subject.objects.filter(is_active=True).order_by('name')
+
+    # Subjects grouped by exam id (JSON for the template's dependent dropdown)
+    import json
+    exam_subjects = {str(e.id): [{'id': s.id, 'name': s.name}
+                                 for s in e.subjects.all()]
+                     for e in examinations}
+
+    recent = (MarkEntry.objects
+              .select_related('student', 'examination', 'subject', 'updated_by')
+              .order_by('-updated_at')[:10])
+
+    context = {
+        'students':     students,
+        'examinations': examinations,
+        'subjects':     subjects,
+        'exam_subjects_json': json.dumps(exam_subjects),
+        'recent':       recent,
+        'status_choices': MarkEntry.STATUS_CHOICES,
+        'is_admin':     True,
+    }
+    return render(request, 'marks/admin_mark_create.html', context)
+
+

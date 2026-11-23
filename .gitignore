@@ -12,3 +12,6 @@ staticfiles/
 *.sqlite3
 agent_test.txt
 n.py
+venv/
+.venv/
+.DS_Store

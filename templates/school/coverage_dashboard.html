@@ -1,0 +1,33 @@
+﻿{% extends "base.html" %}
+{% block title %}Coverage Dashboard{% endblock %}
+{% block page_title %}Curriculum Coverage{% endblock %}
+{% block content %}
+<h4 class="mb-3">Curriculum Coverage</h4>
+{% if schemes %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead><tr><th>Learning Area</th><th>Grade</th><th>Term</th><th>Year</th><th>Coverage</th></tr></thead>
+            <tbody>
+            {% for s in schemes %}
+                <tr>
+                    <td><a href="{% url 'school:scheme_detail' s.id %}">{{ s.learning_area.name }}</a></td>
+                    <td>{{ s.grade_level.name }}</td>
+                    <td>{{ s.term.name }}</td>
+                    <td>{{ s.academic_year.year }}</td>
+                    <td style="min-width:200px;">
+                        <div class="progress" style="height:10px;">
+                            <div class="progress-bar bg-success" style="width:{{ s.pct }}%"></div>
+                        </div>
+                        <small>{{ s.covered_count }}/{{ s.row_count }} ({{ s.pct }}%)</small>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">No schemes yet. <a href="{% url 'school:scheme_list' %}">Back to schemes</a>.</div>
+{% endif %}
+{% endblock %}

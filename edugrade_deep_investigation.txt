@@ -1,0 +1,4313 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261122201540
+Username: CMCCOMPUTER\CMC BANGLADESH
+RunAs User: CMCCOMPUTER\CMC BANGLADESH
+Configuration Name: 
+Machine: CMCCOMPUTER (Microsoft Windows NT 10.0.19045.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -noexit -command try { . "c:\Users\CMC BANGLADESH\AppData\Local\Programs\Microsoft VS Code\8a14f0cc1b\resources\app\out\vs\workbench\contrib\terminal\common\scripts\shellIntegration.ps1" } catch {}
+Process ID: 10748
+PSVersion: 5.1.19041.7181
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.19041.7181
+BuildVersion: 10.0.19041.7181
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is Microsoft.PowerShell.Core\FileSystem::\\wsl$\Ubuntu\home\elisha\-EduGrade\edugrade_deep_investigation.txt
+
+EDUGRADE SECOND STAGE INVESTIGATION
+PROJECT: Microsoft.PowerShell.Core\FileSystem::\\wsl$\Ubuntu\home\elisha\-EduGrade
+
+====================================================
+FILE: grading\engine.py
+LINES: 1 - 180
+====================================================
+    1: from django.db import models
+    2: from django.db.models import Avg, Sum, Count, Q
+    3: from decimal import Decimal
+    4: from .models import GradingSystem, GradeRule, PerformanceAnalysis, SubjectPerformance
+    5: from marks.models import MarkEntry
+    6: from students.models import Student
+    7: from datetime import datetime
+    8:
+    9: class GradingEngine:
+   10:     """Core grading engine for processing marks"""
+   11:
+   12:     def __init__(self, examination, grade_level=None, stream=None):
+   13:         self.examination = examination
+   14:         self.grade_level = grade_level
+   15:         self.stream = stream
+   16:         self.grading_system = self._get_grading_system()
+   17:
+   18:     def _get_grading_system(self):
+   19:         """Get the appropriate grading system"""
+   20:         curriculum = self.examination.curriculum
+   21:         grade_level = self.examination.grade_level
+   22:
+   23:         # Try to find a specific grading system for this grade
+   24:         grading_system = GradingSystem.objects.filter(
+   25:             curriculum=curriculum,
+   26:             grade_level=grade_level,
+   27:             is_active=True
+   28:         ).first()
+   29:
+   30:         if not grading_system:
+   31:             # Fall back to curriculum-level grading system
+   32:             grading_system = GradingSystem.objects.filter(
+   33:                 curriculum=curriculum,
+   34:                 grade_level__isnull=True,
+   35:                 is_active=True
+   36:             ).first()
+   37:
+   38:         return grading_system
+   39:
+   40:     def _get_grade_rule(self, score, subject=None):
+   41:         """Determine grade based on score"""
+   42:         if not self.grading_system:
+   43:             return None, None, 0
+   44:
+   45:         rules = GradeRule.objects.filter(
+   46:             grading_system=self.grading_system,
+   47:             is_active=True
+   48:         )
+   49:
+   50:         if subject:
+   51:             rules = rules.filter(
+   52:                 models.Q(subject_type='ALL') |
+   53:                 models.Q(subject_type='SPECIFIC', subject=subject)
+   54:             )
+   55:         else:
+   56:             rules = rules.filter(subject_type='ALL')
+   57:
+   58:         for rule in rules.order_by('order'):
+   59:             if rule.min_score <= score <= rule.max_score:
+   60:                 return rule.grade, rule.grade_name, rule.points
+   61:
+   62:         return None, None, 0
+   63:
+   64:     def _get_subject_marks(self, student):
+   65:         """Get all marks for a student in this examination"""
+   66:         marks = MarkEntry.objects.filter(
+   67:             student=student,
+   68:             examination=self.examination,
+   69:             is_active=True
+   70:         ).select_related('subject')
+   71:
+   72:         return {mark.subject_id: mark for mark in marks}
+   73:
+   74:     def process_student(self, student):
+   75:         """Process a single student's marks"""
+   76:         marks = self._get_subject_marks(student)
+   77:
+   78:         if not marks:
+   79:             return None
+   80:
+   81:         # Calculate subject performances
+   82:         subject_performances = []
+   83:         total_score = 0
+   84:         total_possible = 0
+   85:         max_possible = len(marks) * 100
+   86:
+   87:         for subject_id, mark in marks.items():
+   88:             score = mark.score or 0
+   89:             grade, grade_name, points = self._get_grade_rule(float(score), mark.subject)
+   90:
+   91:             subject_performances.append({
+   92:                 'subject': mark.subject,
+   93:                 'score': score,
+   94:                 'grade': grade,
+   95:                 'grade_name': grade_name,
+   96:                 'points': points
+   97:             })
+   98:
+   99:             total_score += float(score)
+  100:             total_possible += 100
+  101:
+  102:         # Calculate overall performance
+  103:         total_possible = total_possible or 1
+  104:         average_score = (total_score / total_possible) * 100 if total_possible > 0 else 0
+  105:         overall_grade, overall_grade_name, overall_points = self._get_grade_rule(average_score)
+  106:
+  107:         return {
+  108:             'student': student,
+  109:             'marks': marks,
+  110:             'subject_performances': subject_performances,
+  111:             'total_score': total_score,
+  112:             'average_score': average_score,
+  113:             'overall_grade': overall_grade,
+  114:             'overall_points': overall_points,
+  115:             'grade_name': overall_grade_name
+  116:         }
+  117:
+  118:     def process_examination(self):
+  119:         """Process all students for this examination"""
+  120:         # Get all students for this class
+  121:         if self.grade_level and self.stream:
+  122:             students = Student.objects.filter(
+  123:                 current_grade_level=self.grade_level,
+  124:                 current_stream=self.stream,
+  125:                 is_active=True
+  126:             )
+  127:         else:
+  128:             # Get all students in the grade level
+  129:             students = Student.objects.filter(
+  130:                 current_grade_level=self.examination.grade_level,
+  131:                 is_active=True
+  132:             )
+  133:
+  134:         results = []
+  135:         for student in students:
+  136:             result = self.process_student(student)
+  137:             if result:
+  138:                 results.append(result)
+  139:
+  140:         # Save results to database
+  141:         self._save_results(results)
+  142:
+  143:         # Calculate rankings
+  144:         self._calculate_rankings(results)
+  145:
+  146:         # Identify strengths and weaknesses
+  147:         self._analyze_performance(results)
+  148:
+  149:         return results
+  150:
+  151:     def _save_results(self, results):
+  152:         """Save performance analysis to database"""
+  153:         for result in results:
+  154:             # Create or update PerformanceAnalysis
+  155:             analysis, created = PerformanceAnalysis.objects.update_or_create(
+  156:                 student=result['student'],
+  157:                 examination=self.examination,
+  158:                 defaults={
+  159:                     'academic_year': self.examination.academic_year,
+  160:                     'term': self.examination.term,
+  161:                     'total_score': result['total_score'],
+  162:                     'average_score': result['average_score'],
+  163:                     'overall_grade': result['overall_grade'],
+  164:                     'overall_points': result['overall_points'],
+  165:                 }
+  166:             )
+  167:
+  168:             # Save subject performances
+  169:             SubjectPerformance.objects.filter(analysis=analysis).delete()
+  170:             for perf in result['subject_performances']:
+  171:                 SubjectPerformance.objects.create(
+  172:                     analysis=analysis,
+  173:                     subject=perf['subject'],
+  174:                     score=perf['score'],
+  175:                     grade=perf['grade'],
+  176:                     points=perf['points']
+  177:                 )
+  178:
+  179:     def _calculate_rankings(self, results):
+  180:         """Calculate student rankings"""
+
+====================================================
+FILE: grading\views.py
+LINES: 220 - 330
+====================================================
+  220:         'lowest_score': lowest_score,
+  221:         'level_distribution': level_distribution.items(),
+  222:         'subject_performances': subject_performances,
+  223:         'top_students': top_students,
+  224:         'is_cbc': True,
+  225:     }
+  226:     return render(request, 'grading/class_report.html', context)
+  227:
+  228:
+  229: @login_required
+  230: def student_report(request, student_id):
+  231:     """View individual student report"""
+  232:     student = get_object_or_404(Student, id=student_id)
+  233:     examination_id = request.GET.get('exam_id')
+  234:
+  235:     if examination_id:
+  236:         examination = get_object_or_404(Examination, id=examination_id)
+  237:     else:
+  238:         examination = None
+  239:
+  240:     if examination and examination.curriculum.code == '844':
+  241:         return _kcse_student_report(request, student, examination)
+  242:     elif examination and examination.curriculum.code == 'CBC':
+  243:         return _cbc_student_report(request, student, examination)
+  244:     else:
+  245:         messages.warning(request, 'Please select an examination with a valid curriculum.')
+  246:         return redirect('students:detail', student_id=student.id)
+  247:
+  248:
+  249: def _kcse_student_report(request, student, examination):
+  250:     """Generate KCSE student report"""
+  251:     from .models import StudentKCSEGrade, StudentOverallKCSE
+  252:
+  253:     grades = StudentKCSEGrade.objects.filter(
+  254:         student=student,
+  255:         examination=examination
+  256:     ).select_related('subject')
+  257:
+  258:     overall = StudentOverallKCSE.objects.filter(
+  259:         student=student,
+  260:         examination=examination
+  261:     ).first()
+  262:
+  263:     context = {
+  264:         'student': student,
+  265:         'examination': examination,
+  266:         'grades': grades,
+  267:         'overall': overall,
+  268:         'is_kcse': True,
+  269:     }
+  270:     return render(request, 'grading/student_report.html', context)
+  271:
+  272:
+  273: def _cbc_student_report(request, student, examination):
+  274:     """Generate CBC student report"""
+  275:     from .models import StudentCBAAssessment, StudentOverallCBA
+  276:
+  277:     assessments = StudentCBAAssessment.objects.filter(
+  278:         student=student,
+  279:         examination=examination
+  280:     ).select_related('rubric', 'subject')
+  281:
+  282:     overall = StudentOverallCBA.objects.filter(
+  283:         student=student,
+  284:         examination=examination
+  285:     ).first()
+  286:
+  287:     context = {
+  288:         'student': student,
+  289:         'examination': examination,
+  290:         'assessments': assessments,
+  291:         'overall': overall,
+  292:         'is_cbc': True,
+  293:     }
+  294:     return render(request, 'grading/student_report.html', context)
+  295:
+  296:
+  297: @login_required
+  298: def grading_system_list(request):
+  299:     """List grading systems (KCSE schemes, CBC levels, rubrics, components)."""
+  300:     from .models import (
+  301:         AssessmentScheme, KCSEGradeRule, PerformanceLevel,
+  302:         Rubric, AssessmentComponent,
+  303:     )
+  304:     schemes = AssessmentScheme.objects.all().order_by('name')
+  305:     context = {
+  306:         'schemes': schemes,
+  307:         'kcse_rules_count': KCSEGradeRule.objects.count(),
+  308:         'performance_levels_count': PerformanceLevel.objects.count(),
+  309:         'rubrics_count': Rubric.objects.count(),
+  310:         'components_count': AssessmentComponent.objects.count(),
+  311:     }
+  312:     return render(request, 'grading/systems.html', context)
+  313:
+  314:
+  315:
+  316:
+
+====================================================
+FILE: reports\generator.py
+LINES: 1 - 350
+====================================================
+    1: import io
+    2: import os
+    3: from datetime import datetime
+    4: from django.conf import settings
+    5: from django.template.loader import render_to_string
+    6: from django.http import HttpResponse
+    7: from reportlab.lib import colors
+    8: from reportlab.lib.pagesizes import letter, A4
+    9: from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+   10: from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+   11: from reportlab.lib.units import inch, cm
+   12: from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+   13: from reportlab.graphics.shapes import Drawing
+   14: from reportlab.graphics.charts.barcharts import VerticalBarChart
+   15: from reportlab.graphics.charts.piecharts import Pie
+   16: from docx import Document
+   17: from docx.shared import Inches, Pt, RGBColor
+   18: from docx.enum.text import WD_ALIGN_PARAGRAPH
+   19: from docx.enum.table import WD_TABLE_ALIGNMENT
+   20: import xhtml2pdf.pisa as pisa
+   21: from io import BytesIO
+   22:
+   23: class ReportGenerator:
+   24:     """Generate various reports"""
+   25:
+   26:     def __init__(self, report_type, data, template=None):
+   27:         self.report_type = report_type
+   28:         self.data = data
+   29:         self.template = template
+   30:         self.styles = getSampleStyleSheet()
+   31:         self._setup_styles()
+   32:
+   33:     def _setup_styles(self):
+   34:         """Setup custom styles"""
+   35:         self.styles.add(ParagraphStyle(
+   36:             name='CustomTitle',
+   37:             parent=self.styles['Heading1'],
+   38:             fontSize=24,
+   39:             alignment=TA_CENTER,
+   40:             spaceAfter=20,
+   41:             textColor=colors.HexColor('#1a5276')
+   42:         ))
+   43:         self.styles.add(ParagraphStyle(
+   44:             name='CustomHeading',
+   45:             parent=self.styles['Heading2'],
+   46:             fontSize=16,
+   47:             textColor=colors.HexColor('#2e86c1'),
+   48:             spaceAfter=10
+   49:         ))
+   50:         self.styles.add(ParagraphStyle(
+   51:             name='CustomBody',
+   52:             parent=self.styles['Normal'],
+   53:             fontSize=11,
+   54:             spaceAfter=6
+   55:         ))
+   56:
+   57:     def generate_student_report_pdf(self, student, analysis, examination):
+   58:         """Generate student report as PDF"""
+   59:         buffer = io.BytesIO()
+   60:         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+   61:         story = []
+   62:
+   63:         # Title
+   64:         story.append(Paragraph("STUDENT PERFORMANCE REPORT", self.styles['CustomTitle']))
+   65:         story.append(Spacer(1, 0.2*inch))
+   66:
+   67:         # School Info
+   68:         story.append(Paragraph("EduGrade Analytics System", self.styles['CustomHeading']))
+   69:         story.append(Paragraph("School Performance Report", self.styles['CustomBody']))
+   70:         story.append(Spacer(1, 0.1*inch))
+   71:
+   72:         # Student Information Table
+   73:         student_data = [
+   74:             ['Admission No:', student.admission_number],
+   75:             ['Name:', student.full_name],
+   76:             ['Grade/Form:', student.current_grade_level.name if student.current_grade_level else '-'],
+   77:             ['Stream:', student.current_stream.name if student.current_stream else '-'],
+   78:             ['Examination:', examination.name if examination else '-'],
+   79:             ['Date:', datetime.now().strftime('%Y-%m-%d')],
+   80:         ]
+   81:         student_table = Table(student_data, colWidths=[2*inch, 4*inch])
+   82:         student_table.setStyle(TableStyle([
+   83:             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+   84:             ('FONTSIZE', (0, 0), (-1, -1), 10),
+   85:             ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+   86:             ('TEXTCOLOR', (0, 0), (0, -1), colors.black),
+   87:             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+   88:             ('PADDING', (0, 0), (-1, -1), 5),
+   89:         ]))
+   90:         story.append(student_table)
+   91:         story.append(Spacer(1, 0.2*inch))
+   92:
+   93:         # Subject Performance
+   94:         if 'subject_performances' in self.data:
+   95:             story.append(Paragraph("Subject Performance", self.styles['CustomHeading']))
+   96:             subject_data = [['Subject', 'Score', 'Grade', 'Points']]
+   97:             for perf in self.data['subject_performances']:
+   98:                 subject_data.append([
+   99:                     perf['subject_name'],
+  100:                     f"{perf['score']:.1f}%",
+  101:                     perf['grade'],
+  102:                     str(perf.get('points', '-'))
+  103:                 ])
+  104:
+  105:             subject_table = Table(subject_data, colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+  106:             subject_table.setStyle(TableStyle([
+  107:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  108:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  109:                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e86c1')),
+  110:                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+  111:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  112:                 ('PADDING', (0, 0), (-1, -1), 5),
+  113:             ]))
+  114:             story.append(subject_table)
+  115:             story.append(Spacer(1, 0.2*inch))
+  116:
+  117:         # Overall Performance
+  118:         if 'overall' in self.data:
+  119:             overall = self.data['overall']
+  120:             story.append(Paragraph("Overall Performance", self.styles['CustomHeading']))
+  121:             overall_data = [
+  122:                 ['Total Score', f"{overall.get('total_score', 0):.1f}"],
+  123:                 ['Average', f"{overall.get('average_score', 0):.1f}%"],
+  124:                 ['Grade', overall.get('grade', '-')],
+  125:                 ['Position', str(overall.get('position', '-'))],
+  126:             ]
+  127:             overall_table = Table(overall_data, colWidths=[2*inch, 4*inch])
+  128:             overall_table.setStyle(TableStyle([
+  129:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  130:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  131:                 ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+  132:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  133:                 ('PADDING', (0, 0), (-1, -1), 5),
+  134:             ]))
+  135:             story.append(overall_table)
+  136:             story.append(Spacer(1, 0.2*inch))
+  137:
+  138:         # Strengths and Weaknesses
+  139:         if 'strengths' in self.data and self.data['strengths']:
+  140:             story.append(Paragraph("Strengths", self.styles['CustomHeading']))
+  141:             for strength in self.data['strengths']:
+  142:                 story.append(Paragraph(f"• {strength}", self.styles['CustomBody']))
+  143:             story.append(Spacer(1, 0.1*inch))
+  144:
+  145:         if 'weaknesses' in self.data and self.data['weaknesses']:
+  146:             story.append(Paragraph("Areas for Improvement", self.styles['CustomHeading']))
+  147:             for weakness in self.data['weaknesses']:
+  148:                 story.append(Paragraph(f"• {weakness}", self.styles['CustomBody']))
+  149:             story.append(Spacer(1, 0.1*inch))
+  150:
+  151:         # Footer
+  152:         story.append(Spacer(1, 0.5*inch))
+  153:         story.append(Paragraph("Generated by EduGrade Analytics System", self.styles['Normal']))
+  154:         story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", self.styles['Normal']))
+  155:
+  156:         doc.build(story)
+  157:         buffer.seek(0)
+  158:         return buffer
+  159:
+  160:     def generate_class_report_pdf(self, class_data):
+  161:         """Generate class report as PDF"""
+  162:         buffer = io.BytesIO()
+  163:         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+  164:         story = []
+  165:
+  166:         # Title
+  167:         story.append(Paragraph("CLASS PERFORMANCE REPORT", self.styles['CustomTitle']))
+  168:         story.append(Spacer(1, 0.2*inch))
+  169:
+  170:         # Class Info
+  171:         story.append(Paragraph(f"Class: {class_data.get('class_name', 'N/A')}", self.styles['CustomHeading']))
+  172:         story.append(Paragraph(f"Exam: {class_data.get('exam_name', 'N/A')}", self.styles['CustomBody']))
+  173:         story.append(Spacer(1, 0.1*inch))
+  174:
+  175:         # Statistics
+  176:         stats = class_data.get('statistics', {})
+  177:         stats_data = [
+  178:             ['Total Students', str(stats.get('total_students', 0))],
+  179:             ['Average Score', f"{stats.get('average_score', 0):.1f}%"],
+  180:             ['Highest Score', f"{stats.get('highest_score', 0):.1f}%"],
+  181:             ['Lowest Score', f"{stats.get('lowest_score', 0):.1f}%"],
+  182:             ['Pass Rate', f"{stats.get('pass_rate', 0):.1f}%"],
+  183:         ]
+  184:         stats_table = Table(stats_data, colWidths=[3*inch, 3*inch])
+  185:         stats_table.setStyle(TableStyle([
+  186:             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  187:             ('FONTSIZE', (0, 0), (-1, -1), 10),
+  188:             ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+  189:             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  190:             ('PADDING', (0, 0), (-1, -1), 5),
+  191:         ]))
+  192:         story.append(stats_table)
+  193:         story.append(Spacer(1, 0.2*inch))
+  194:
+  195:         # Top Students
+  196:         top_students = class_data.get('top_students', [])
+  197:         if top_students:
+  198:             story.append(Paragraph("Top Students", self.styles['CustomHeading']))
+  199:             top_data = [['Rank', 'Student', 'Score']]
+  200:             for i, student in enumerate(top_students[:10], 1):
+  201:                 top_data.append([
+  202:                     str(i),
+  203:                     student.get('name', 'N/A'),
+  204:                     f"{student.get('score', 0):.1f}%"
+  205:                 ])
+  206:
+  207:             top_table = Table(top_data, colWidths=[1*inch, 3.5*inch, 2*inch])
+  208:             top_table.setStyle(TableStyle([
+  209:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  210:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  211:                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e86c1')),
+  212:                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+  213:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  214:                 ('PADDING', (0, 0), (-1, -1), 5),
+  215:             ]))
+  216:             story.append(top_table)
+  217:
+  218:         # Footer
+  219:         story.append(Spacer(1, 0.5*inch))
+  220:         story.append(Paragraph("Generated by EduGrade Analytics System", self.styles['Normal']))
+  221:         story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", self.styles['Normal']))
+  222:
+  223:         doc.build(story)
+  224:         buffer.seek(0)
+  225:         return buffer
+  226:
+  227:     def generate_word_report(self, report_data, report_type='student'):
+  228:         """Generate Word document report"""
+  229:         doc = Document()
+  230:
+  231:         # Add title
+  232:         title = doc.add_heading(report_data.get('title', 'Performance Report'), 0)
+  233:         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+  234:
+  235:         # Add date
+  236:         doc.add_paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+  237:         doc.add_paragraph()
+  238:
+  239:         if report_type == 'student':
+  240:             self._add_student_section(doc, report_data)
+  241:         elif report_type == 'class':
+  242:             self._add_class_section(doc, report_data)
+  243:         else:
+  244:             self._add_general_section(doc, report_data)
+  245:
+  246:         # Save to buffer
+  247:         buffer = BytesIO()
+  248:         doc.save(buffer)
+  249:         buffer.seek(0)
+  250:         return buffer
+  251:
+  252:     def _add_student_section(self, doc, data):
+  253:         """Add student section to Word document"""
+  254:         student = data.get('student', {})
+  255:         doc.add_heading('Student Information', level=1)
+  256:         doc.add_paragraph(f"Name: {student.get('name', 'N/A')}")
+  257:         doc.add_paragraph(f"Admission No: {student.get('admission', 'N/A')}")
+  258:         doc.add_paragraph(f"Grade: {student.get('grade', 'N/A')}")
+  259:         doc.add_paragraph(f"Stream: {student.get('stream', 'N/A')}")
+  260:         doc.add_paragraph()
+  261:
+  262:         # Subject Performance
+  263:         subject_perf = data.get('subject_performances', [])
+  264:         if subject_perf:
+  265:             doc.add_heading('Subject Performance', level=1)
+  266:             table = doc.add_table(rows=1, cols=4)
+  267:             table.style = 'Table Grid'
+  268:             hdr_cells = table.rows[0].cells
+  269:             hdr_cells[0].text = 'Subject'
+  270:             hdr_cells[1].text = 'Score'
+  271:             hdr_cells[2].text = 'Grade'
+  272:             hdr_cells[3].text = 'Points'
+  273:
+  274:             for perf in subject_perf:
+  275:                 row_cells = table.add_row().cells
+  276:                 row_cells[0].text = perf.get('subject_name', 'N/A')
+  277:                 row_cells[1].text = f"{perf.get('score', 0):.1f}%"
+  278:                 row_cells[2].text = perf.get('grade', '-')
+  279:                 row_cells[3].text = str(perf.get('points', '-'))
+  280:             doc.add_paragraph()
+  281:
+  282:         # Overall
+  283:         overall = data.get('overall', {})
+  284:         if overall:
+  285:             doc.add_heading('Overall Performance', level=1)
+  286:             doc.add_paragraph(f"Total Score: {overall.get('total_score', 0):.1f}")
+  287:             doc.add_paragraph(f"Average: {overall.get('average_score', 0):.1f}%")
+  288:             doc.add_paragraph(f"Grade: {overall.get('grade', '-')}")
+  289:             doc.add_paragraph()
+  290:
+  291:         # Strengths and Weaknesses
+  292:         strengths = data.get('strengths', [])
+  293:         if strengths:
+  294:             doc.add_heading('Strengths', level=1)
+  295:             for strength in strengths:
+  296:                 doc.add_paragraph(f"• {strength}")
+  297:             doc.add_paragraph()
+  298:
+  299:         weaknesses = data.get('weaknesses', [])
+  300:         if weaknesses:
+  301:             doc.add_heading('Areas for Improvement', level=1)
+  302:             for weakness in weaknesses:
+  303:                 doc.add_paragraph(f"• {weakness}")
+  304:
+  305:     def _add_class_section(self, doc, data):
+  306:         """Add class section to Word document"""
+  307:         doc.add_heading('Class Information', level=1)
+  308:         doc.add_paragraph(f"Class: {data.get('class_name', 'N/A')}")
+  309:         doc.add_paragraph(f"Exam: {data.get('exam_name', 'N/A')}")
+  310:         doc.add_paragraph()
+  311:
+  312:         stats = data.get('statistics', {})
+  313:         if stats:
+  314:             doc.add_heading('Statistics', level=1)
+  315:             doc.add_paragraph(f"Total Students: {stats.get('total_students', 0)}")
+  316:             doc.add_paragraph(f"Average Score: {stats.get('average_score', 0):.1f}%")
+  317:             doc.add_paragraph(f"Highest Score: {stats.get('highest_score', 0):.1f}%")
+  318:             doc.add_paragraph(f"Lowest Score: {stats.get('lowest_score', 0):.1f}%")
+  319:             doc.add_paragraph(f"Pass Rate: {stats.get('pass_rate', 0):.1f}%")
+  320:             doc.add_paragraph()
+  321:
+  322:         top_students = data.get('top_students', [])
+  323:         if top_students:
+  324:             doc.add_heading('Top Students', level=1)
+  325:             table = doc.add_table(rows=1, cols=3)
+  326:             table.style = 'Table Grid'
+  327:             hdr_cells = table.rows[0].cells
+  328:             hdr_cells[0].text = 'Rank'
+  329:             hdr_cells[1].text = 'Student'
+  330:             hdr_cells[2].text = 'Score'
+  331:
+  332:             for i, student in enumerate(top_students[:10], 1):
+  333:                 row_cells = table.add_row().cells
+  334:                 row_cells[0].text = str(i)
+  335:                 row_cells[1].text = student.get('name', 'N/A')
+  336:                 row_cells[2].text = f"{student.get('score', 0):.1f}%"
+  337:
+  338:     def _add_general_section(self, doc, data):
+  339:         """Add general section to Word document"""
+  340:         doc.add_heading('Report Details', level=1)
+  341:         for key, value in data.items():
+  342:             if key not in ['title']:
+  343:                 doc.add_paragraph(f"{key}: {value}")
+
+====================================================
+FILE: reports\views.py
+LINES: 1 - 350
+====================================================
+    1:
+    2: from django.shortcuts import render, redirect, get_object_or_404
+    3: from django.contrib.auth import get_user_model
+    4: from django.contrib.auth.decorators import login_required
+    5: from django.contrib.auth import get_user_model
+    6: from django.contrib import messages
+    7: from django.contrib.auth import get_user_model
+    8: from django.http import HttpResponse, FileResponse
+    9: from django.contrib.auth import get_user_model
+   10: from django.utils import timezone
+   11: from django.contrib.auth import get_user_model
+   12: from django.db.models import Avg, Max, Min, Count, Sum
+   13: from django.contrib.auth import get_user_model
+   14: from .models import ReportTemplate, GeneratedReport, ReportComment
+   15: from .generator import ReportGenerator
+   16: from students.models import Student
+   17: from examinations.models import Examination
+   18: from school.models import AcademicYear, Term, GradeLevel, Stream
+   19: from teachers.models import TeacherProfile
+   20: from marks.models import MarkEntry
+   21: from core.access import is_admin, permitted_student_queryset, can_use_class, class_teacher_assignments
+   22:
+   23: User = get_user_model()
+   24:
+   25: # Import grading models with error handling
+   26: try:
+   27:     from grading.models import StudentKCSEGrade, StudentOverallKCSE, StudentCBAAssessment, StudentOverallCBA
+   28: except ImportError:
+   29:     StudentKCSEGrade = None
+   30:     StudentOverallKCSE = None
+   31:     StudentCBAAssessment = None
+   32:     StudentOverallCBA = None
+   33:
+   34: @login_required
+   35: def report_dashboard(request):
+   36:     context = {
+   37:         'student_reports': GeneratedReport.objects.filter(report_type='STUDENT'),
+   38:         'class_reports': GeneratedReport.objects.filter(report_type='CLASS'),
+   39:         'school_reports': GeneratedReport.objects.filter(report_type='SCHOOL'),
+   40:         'total_reports': GeneratedReport.objects.count(),
+   41:         'published_reports': GeneratedReport.objects.filter(status='PUBLISHED').count(),
+   42:     }
+   43:     return render(request, 'reports/dashboard.html', context)
+   44:
+   45: @login_required
+   46: def report_list(request):
+   47:     reports = GeneratedReport.objects.select_related('student', 'examination', 'academic_year', 'term', 'generated_by').all()
+   48:
+   49:     status_filter = request.GET.get('status')
+   50:     if status_filter:
+   51:         reports = reports.filter(status=status_filter)
+   52:
+   53:     report_type_filter = request.GET.get('report_type')
+   54:     if report_type_filter:
+   55:         reports = reports.filter(report_type=report_type_filter)
+   56:
+   57:     context = {
+   58:         'reports': reports,
+   59:         'status_choices': GeneratedReport.STATUS_CHOICES,
+   60:         'report_type_choices': GeneratedReport.REPORT_TYPES,
+   61:     }
+   62:     return render(request, 'reports/list.html', context)
+   63:
+   64: @login_required
+   65: def generate_student_report(request, student_id):
+   66:     student = get_object_or_404(permitted_student_queryset(request.user), id=student_id)
+   67:     examination_id = request.GET.get('exam_id')
+   68:
+   69:     if not examination_id:
+   70:         messages.error(request, 'Please select an examination!')
+   71:         return redirect('students:detail', student_id=student.id)
+   72:
+   73:     examination = get_object_or_404(Examination, id=examination_id)
+   74:
+   75:     report_data = {
+   76:         'title': f"Student Report - {student.full_name}",
+   77:         'student': {
+   78:             'name': student.full_name,
+   79:             'admission': student.admission_number,
+   80:             'grade': student.current_grade_level.name if student.current_grade_level else '-',
+   81:             'stream': student.current_stream.name if student.current_stream else '-',
+   82:         },
+   83:         'examination': examination.name,
+   84:         'subject_performances': [],
+   85:         'overall': {},
+   86:         'strengths': [],
+   87:         'weaknesses': [],
+   88:     }
+   89:
+   90:     if StudentKCSEGrade and examination.curriculum.code == '844':
+   91:         kcse_grades = StudentKCSEGrade.objects.filter(student=student, examination=examination).select_related('subject')
+   92:         for grade in kcse_grades:
+   93:             report_data['subject_performances'].append({
+   94:                 'subject_name': grade.subject.name,
+   95:                 'score': float(grade.raw_mark),
+   96:                 'grade': grade.grade,
+   97:                 'points': float(grade.points),
+   98:             })
+   99:         if StudentOverallKCSE:
+  100:             overall = StudentOverallKCSE.objects.filter(student=student, examination=examination).first()
+  101:             if overall:
+  102:                 report_data['overall'] = {
+  103:                     'total_score': float(overall.total_points),
+  104:                     'average_score': float(overall.mean_score),
+  105:                     'grade': overall.mean_grade,
+  106:                     'position': overall.position,
+  107:                 }
+  108:
+  109:     elif StudentCBAAssessment and examination.curriculum.code == 'CBC':
+  110:         cbc_assessments = StudentCBAAssessment.objects.filter(student=student, examination=examination).select_related('subject')
+  111:         for assessment in cbc_assessments:
+  112:             report_data['subject_performances'].append({
+  113:                 'subject_name': assessment.subject.name,
+  114:                 'score': float(assessment.score) if assessment.score else 0,
+  115:                 'grade': assessment.overall_level.level_code if assessment.overall_level else '-',
+  116:                 'points': assessment.overall_level.numeric_value if assessment.overall_level else '-',
+  117:             })
+  118:         if StudentOverallCBA:
+  119:             overall = StudentOverallCBA.objects.filter(student=student, examination=examination).first()
+  120:             if overall:
+  121:                 report_data['overall'] = {
+  122:                     'total_score': float(overall.total_score),
+  123:                     'average_score': float(overall.total_weighted_score),
+  124:                     'grade': overall.overall_level.level_code if overall.overall_level else '-',
+  125:                     'position': overall.position,
+  126:                 }
+  127:
+  128:     if not report_data['subject_performances']:
+  129:         messages.error(request, 'No performance data found for this student!')
+  130:         return redirect('students:detail', student_id=student.id)
+  131:
+  132:     generator = ReportGenerator('STUDENT', report_data)
+  133:
+  134:     if request.GET.get('format') == 'word':
+  135:         word_buffer = generator.generate_word_report(report_data, 'student')
+  136:         response = HttpResponse(word_buffer.getvalue(), content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+  137:         response['Content-Disposition'] = f'attachment; filename=student_report_{student.admission_number}_{examination.code}.docx'
+  138:         return response
+  139:     else:
+  140:         pdf_buffer = generator.generate_student_report_pdf(student, report_data, examination)
+  141:         response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+  142:         response['Content-Disposition'] = f'attachment; filename=student_report_{student.admission_number}_{examination.code}.pdf'
+  143:         return response
+  144:
+  145: @login_required
+  146: def generate_class_report(request):
+  147:     if request.method == 'POST':
+  148:         examination_id = request.POST.get('examination')
+  149:         grade_level_id = request.POST.get('grade_level')
+  150:         stream_id = request.POST.get('stream')
+  151:
+  152:         if not all([examination_id, grade_level_id, stream_id]):
+  153:             messages.error(request, 'Please select all required fields!')
+  154:             return redirect('reports:class_report')
+  155:
+  156:         if not can_use_class(request.user, grade_level_id, stream_id):
+  157:             messages.error(request, 'You can only generate reports for your assigned class and stream.')
+  158:             return redirect('reports:class_report')
+  159:
+  160:         examination = get_object_or_404(Examination, id=examination_id)
+  161:         grade_level = get_object_or_404(GradeLevel, id=grade_level_id)
+  162:         stream = get_object_or_404(Stream, id=stream_id)
+  163:
+  164:         students = Student.objects.filter(current_grade_level=grade_level, current_stream=stream, is_active=True)
+  165:
+  166:         if not students.exists():
+  167:             messages.error(request, 'No students found in this class!')
+  168:             return redirect('reports:class_report')
+  169:
+  170:         student_data = []
+  171:         total_score = 0
+  172:         highest_score = 0
+  173:         lowest_score = 100
+  174:
+  175:         for student in students:
+  176:             student_info = {'name': student.full_name, 'admission': student.admission_number, 'score': 0, 'grade': '-'}
+  177:
+  178:             if StudentOverallKCSE and examination.curriculum.code == '844':
+  179:                 overall = StudentOverallKCSE.objects.filter(student=student, examination=examination).first()
+  180:                 if overall:
+  181:                     student_info['score'] = float(overall.mean_score)
+  182:                     student_info['grade'] = overall.mean_grade
+  183:             elif StudentOverallCBA and examination.curriculum.code == 'CBC':
+  184:                 overall = StudentOverallCBA.objects.filter(student=student, examination=examination).first()
+  185:                 if overall:
+  186:                     student_info['score'] = float(overall.total_weighted_score)
+  187:                     student_info['grade'] = overall.overall_level.level_code if overall.overall_level else '-'
+  188:
+  189:             student_data.append(student_info)
+  190:             if student_info['score'] > 0:
+  191:                 total_score += student_info['score']
+  192:                 if student_info['score'] > highest_score:
+  193:                     highest_score = student_info['score']
+  194:                 if student_info['score'] < lowest_score:
+  195:                     lowest_score = student_info['score']
+  196:
+  197:         total_students = len(student_data)
+  198:         avg_score = total_score / total_students if total_students > 0 else 0
+  199:         pass_count = sum(1 for s in student_data if s['score'] >= 40)
+  200:         pass_rate = (pass_count / total_students * 100) if total_students > 0 else 0
+  201:         top_students = sorted(student_data, key=lambda x: x['score'], reverse=True)[:10]
+  202:
+  203:         report_data = {
+  204:             'title': f"Class Report - {grade_level.name} {stream.name}",
+  205:             'class_name': f"{grade_level.name} {stream.name}",
+  206:             'exam_name': examination.name,
+  207:             'statistics': {
+  208:                 'total_students': total_students,
+  209:                 'average_score': avg_score,
+  210:                 'highest_score': highest_score,
+  211:                 'lowest_score': lowest_score if lowest_score < 100 else 0,
+  212:                 'pass_rate': pass_rate,
+  213:                 'pass_count': pass_count,
+  214:             },
+  215:             'top_students': top_students,
+  216:         }
+  217:
+  218:         generator = ReportGenerator('CLASS', report_data)
+  219:         pdf_buffer = generator.generate_class_report_pdf(report_data)
+  220:
+  221:         GeneratedReport.objects.create(
+  222:             report_type='CLASS',
+  223:             title=f"Class Report - {grade_level.name} {stream.name}",
+  224:             examination=examination,
+  225:             academic_year=examination.academic_year,
+  226:             term=examination.term,
+  227:             status='GENERATED',
+  228:             generated_by=request.user
+  229:         )
+  230:
+  231:         response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+  232:         response['Content-Disposition'] = f'attachment; filename=class_report_{grade_level.name}_{stream.name}_{examination.code}.pdf'
+  233:         return response
+  234:
+  235:     context = {
+  236:         'examinations': Examination.objects.filter(status__in=['LOCKED', 'PUBLISHED']),
+  237:         'grade_levels': GradeLevel.objects.filter(is_active=True) if is_admin(request.user) else GradeLevel.objects.filter(id__in=class_teacher_assignments(request.user).values('grade_level_id')),
+  238:         'streams': Stream.objects.filter(is_active=True) if is_admin(request.user) else Stream.objects.filter(id__in=class_teacher_assignments(request.user).values('stream_id')),
+  239:     }
+  240:     return render(request, 'reports/class_report.html', context)
+  241:
+  242: @login_required
+  243: def school_report(request):
+  244:     "Generate school-wide performance report"
+  245:     if not is_admin(request.user):
+  246:         messages.error(request, 'Only administrators can view the school-wide report.')
+  247:         return redirect('reports:dashboard')
+  248:     import django.db.models as models
+  249:
+  250:     total_students = Student.objects.count()
+  251:     active_students = Student.objects.filter(is_active=True).count()
+  252:
+  253:     grade_stats = []
+  254:     for grade in GradeLevel.objects.filter(is_active=True):
+  255:         student_count = Student.objects.filter(current_grade_level=grade, is_active=True).count()
+  256:         if student_count > 0:
+  257:             grade_stats.append({
+  258:                 'name': grade.name,
+  259:                 'students': student_count,
+  260:                 'curriculum': grade.curriculum.name
+  261:             })
+  262:
+  263:     subject_averages = []
+  264:     if StudentKCSEGrade:
+  265:         kcse_subject_performance = {}
+  266:         kcse_grades = StudentKCSEGrade.objects.select_related('subject')
+  267:         for grade in kcse_grades:
+  268:             subject_name = grade.subject.name
+  269:             if subject_name not in kcse_subject_performance:
+  270:                 kcse_subject_performance[subject_name] = {'total': 0, 'count': 0}
+  271:             kcse_subject_performance[subject_name]['total'] += float(grade.raw_mark)
+  272:             kcse_subject_performance[subject_name]['count'] += 1
+  273:
+  274:         for subject, data in kcse_subject_performance.items():
+  275:             if data['count'] > 0:
+  276:                 subject_averages.append({
+  277:                     'name': subject,
+  278:                     'average': data['total'] / data['count']
+  279:                 })
+  280:         subject_averages = sorted(subject_averages, key=lambda x: x['average'], reverse=True)
+  281:
+  282:     avg_kcse = 0
+  283:     pass_rate = 0
+  284:     if StudentOverallKCSE:
+  285:         overall_kcse = StudentOverallKCSE.objects.all()
+  286:         if overall_kcse.exists():
+  287:             avg_kcse = overall_kcse.aggregate(models.Avg('mean_score'))['mean_score__avg'] or 0
+  288:             pass_rate = overall_kcse.filter(mean_score__gte=40).count() / overall_kcse.count() * 100 if overall_kcse.count() > 0 else 0
+  289:
+  290:     avg_cbc = 0
+  291:     if StudentOverallCBA:
+  292:         cbc_overall = StudentOverallCBA.objects.all()
+  293:         if cbc_overall.exists():
+  294:             avg_cbc = cbc_overall.aggregate(models.Avg('total_score'))['total_score__avg'] or 0
+  295:
+  296:     context = {
+  297:         'total_students': total_students,
+  298:         'active_students': active_students,
+  299:         'grade_stats': grade_stats,
+  300:         'subject_averages': subject_averages[:10],
+  301:         'avg_kcse': avg_kcse,
+  302:         'pass_rate': pass_rate,
+  303:         'avg_cbc': avg_cbc,
+  304:         'total_teachers': TeacherProfile.objects.count(),
+  305:         'total_exams': Examination.objects.count(),
+  306:         'total_marks': MarkEntry.objects.count(),
+  307:     }
+  308:     return render(request, 'reports/school_report.html', context)
+  309:
+  310: @login_required
+  311: def report_detail(request, report_id):
+  312:     report = get_object_or_404(GeneratedReport, id=report_id)
+  313:     comments = report.comments.all()
+  314:
+  315:     if request.method == 'POST':
+  316:         comment_text = request.POST.get('comment')
+  317:         if comment_text:
+  318:             ReportComment.objects.create(report=report, user=request.user, comment=comment_text)
+  319:             messages.success(request, 'Comment added successfully!')
+  320:             return redirect('reports:detail', report_id=report.id)
+  321:
+  322:     context = {'report': report, 'comments': comments}
+  323:     return render(request, 'reports/detail.html', context)
+  324:
+  325: @login_required
+  326: def generate_word_report(request, report_id):
+  327:     "Generate Word version of an existing report"
+  328:     report = get_object_or_404(GeneratedReport, id=report_id)
+  329:
+  330:     if report.report_type == 'STUDENT' and report.student:
+  331:         student = report.student
+  332:         examination = report.examination
+  333:
+  334:         report_data = {
+  335:             'title': f"Student Report - {student.full_name}",
+  336:             'student': {
+  337:                 'name': student.full_name,
+  338:                 'admission': student.admission_number,
+  339:                 'grade': student.current_grade_level.name if student.current_grade_level else '-',
+  340:                 'stream': student.current_stream.name if student.current_stream else '-',
+  341:             },
+  342:             'subject_performances': [],
+  343:             'overall': {},
+  344:             'strengths': [],
+  345:             'weaknesses': [],
+  346:         }
+  347:
+  348:         if StudentKCSEGrade and examination and examination.curriculum.code == '844':
+  349:             kcse_grades = StudentKCSEGrade.objects.filter(student=student, examination=examination).select_related('subject')
+  350:             for grade in kcse_grades:
+
+====================================================
+FILE: grading\services.py
+LINES: 820 - 890
+====================================================
+  820:     ``StudentOverallCBA``) for a single student after their marks changed.
+  821:     """
+  822:     from .models import (
+  823:         StudentKCSEGrade, StudentOverallKCSE,
+  824:         StudentCBAAssessment, StudentOverallCBA,
+  825:         AssessmentScheme, KCSEOverallCalculation, PerformanceLevel,
+  826:     )
+  827:
+  828:     if examination.curriculum.code == "844":
+  829:         return _recalculate_kcse_overall(examination, student)
+  830:     elif examination.curriculum.code == "CBC":
+  831:         return _recalculate_cba_overall(examination, student)
+  832:     return None
+  833:
+  834:
+  835: def _recalculate_kcse_overall(examination, student):
+  836:     """Recalculate the overall KCSE result for one student."""
+  837:     from .models import (
+  838:         StudentKCSEGrade, StudentOverallKCSE,
+  839:         AssessmentScheme, KCSEOverallCalculation, KCSEGradeRule,
+  840:     )
+  841:
+  842:     scheme = get_scheme_for_curriculum("844")
+  843:     if not scheme:
+  844:         return None
+  845:
+  846:     calculation = KCSEOverallCalculation.objects.filter(scheme=scheme, is_active=True).first()
+  847:     rules = None
+  848:     if calculation:
+  849:         rules = KCSEGradeRule.objects.filter(scheme=scheme, is_active=True).order_by("order")
+  850:
+  851:     grades = StudentKCSEGrade.objects.filter(
+  852:         student=student, examination=examination
+  853:     ).select_related("subject")
+  854:
+  855:     core_points = []
+  856:     best_points = []
+  857:
+  858:     for grade in grades:
+  859:         if grade.is_core:
+  860:             core_points.append(float(grade.points))
+  861:         else:
+  862:             best_points.append(float(grade.points))
+  863:
+  864:     best_points.sort(reverse=True)
+  865:     best_count = min(calculation.best_subject_count, len(best_points)) if calculation else 5
+  866:     selected_best = best_points[:best_count]
+  867:     total_points = sum(core_points) + sum(selected_best)
+  868:     total_subjects = len(core_points) + len(selected_best)
+  869:     mean_score = round(total_points / total_subjects, 1) if total_subjects else 0
+  870:     mean_grade = _kcse_mean_grade(calculation, mean_score)
+  871:
+  872:     return StudentOverallKCSE.objects.update_or_create(
+  873:         student=student,
+  874:         examination=examination,
+  875:         defaults={
+  876:             "total_points": total_points,
+  877:             "mean_grade": mean_grade,
+  878:             "mean_score": mean_score,
+  879:             "core_subjects_count": len(core_points),
+  880:             "best_subjects_count": len(selected_best),
+  881:             "total_subjects_used": total_subjects,
+  882:         },
+  883:     )[0]
+  884:
+  885:
+  886: def _recalculate_cba_overall(examination, student):
+  887:     """Recalculate the overall CBC / CBA result for one student."""
+  888:     from .models import (
+  889:         StudentCBAAssessment, StudentOverallCBA,
+  890:         AssessmentScheme, PerformanceLevel,
+
+====================================================
+FILE: grading\services.py
+LINES: 470 - 545
+====================================================
+  470:
+  471:     # Determine subject list from the examination
+  472:     exam_subjects = list(examination.subjects.all())
+  473:
+  474:     import random
+  475:     random.seed(42)  # reproducible results
+  476:
+  477:     for student in students:
+  478:         grades_data = []
+  479:         core_points = []
+  480:         best_points = []
+  481:
+  482:         for subject in exam_subjects:
+  483:             # Try to read existing mark; otherwise generate one
+  484:             existing_mark = MarkEntry.objects.filter(
+  485:                 student=student, examination=examination, subject=subject
+  486:             ).first()
+  487:
+  488:             if existing_mark and existing_mark.score is not None:
+  489:                 raw_mark = float(existing_mark.score)
+  490:             else:
+  491:                 raw_mark = round(random.uniform(*score_range), 1)
+  492:
+  493:             # Determine grade / points
+  494:             grade_result = _match_kcse_grade(rules, raw_mark)
+  495:             is_core = calculation and calculation.core_subjects.filter(id=subject.id).exists()
+  496:
+  497:             StudentKCSEGrade.objects.update_or_create(
+  498:                 student=student,
+  499:                 examination=examination,
+  500:                 subject=subject,
+  501:                 defaults={
+  502:                     "raw_mark": raw_mark,
+  503:                     "grade": grade_result["grade"],
+  504:                     "points": Decimal(grade_result["points"]),
+  505:                     "is_core": is_core,
+  506:                 },
+  507:             )
+  508:             kcse_grade_count += 1
+  509:             grades_data.append(grade_result)
+  510:
+  511:             if is_core:
+  512:                 core_points.append(grade_result["points"])
+  513:             else:
+  514:                 best_points.append(grade_result["points"])
+  515:
+  516:         # Calculate overall
+  517:         best_points.sort(reverse=True)
+  518:         best_count = min(calculation.best_subject_count, len(best_points)) if calculation else 5
+  519:         selected_best = best_points[:best_count]
+  520:         total_points = sum(core_points) + sum(selected_best)
+  521:         total_subjects = len(core_points) + len(selected_best)
+  522:         mean_score = round(total_points / total_subjects, 1) if total_subjects else 0
+  523:
+  524:         mean_grade = _kcse_mean_grade(calculation, mean_score)
+  525:
+  526:         StudentOverallKCSE.objects.update_or_create(
+  527:             student=student,
+  528:             examination=examination,
+  529:             defaults={
+  530:                 "total_points": total_points,
+  531:                 "mean_grade": mean_grade,
+  532:                 "mean_score": mean_score,
+  533:                 "core_subjects_count": len(core_points),
+  534:                 "best_subjects_count": len(selected_best),
+  535:                 "total_subjects_used": total_subjects,
+  536:             },
+  537:         )
+  538:         overall_count += 1
+  539:
+  540:     _assign_positions(examination, StudentOverallKCSE, "mean_score")
+  541:
+  542:     return {"kcse_grades": kcse_grade_count, "overalls": overall_count}
+  543:
+  544:
+  545: def seed_cbc_assessments(examination, students=None, assessment_data=None):
+
+====================================================
+FILE: grading\kcse_engine.py
+LINES: 90 - 210
+====================================================
+   90:             return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
+   91:
+   92:         for rule in rules:
+   93:             if rule.min_score <= score <= rule.max_score:
+   94:                 return {
+   95:                     'grade': rule.grade,
+   96:                     'grade_name': rule.grade_name,
+   97:                     'points': float(rule.points),
+   98:                     'descriptor': rule.descriptor,
+   99:                 }
+  100:
+  101:         return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
+  102:
+  103:     def process_student(self, student):
+  104:         """Process a single student's KCSE results"""
+  105:         # Get marks for this student
+  106:         marks = MarkEntry.objects.filter(
+  107:             student=student,
+  108:             examination=self.examination,
+  109:             is_active=True
+  110:         ).select_related('subject')
+  111:
+  112:         if not marks.exists():
+  113:             return None
+  114:
+  115:         grades = []
+  116:         total_points = 0
+  117:         core_subjects = []
+  118:         best_subjects = []
+  119:
+  120:         # Process each subject
+  121:         for mark in marks:
+  122:             score = float(mark.score or 0)
+  123:             grade_result = self.get_grade_and_points(score, mark.subject_id)
+  124:
+  125:             # Determine if this is a core subject
+  126:             is_core = False
+  127:             if self.calculation:
+  128:                 is_core = self.calculation.core_subjects.filter(id=mark.subject_id).exists()
+  129:
+  130:             student_grade, _created = StudentKCSEGrade.objects.update_or_create(
+  131:                 student=student,
+  132:                 examination=self.examination,
+  133:                 subject=mark.subject,
+  134:                 defaults={
+  135:                     'raw_mark': score,
+  136:                     'grade': grade_result['grade'],
+  137:                     'points': grade_result['points'],
+  138:                     'is_core': is_core,
+  139:                 }
+  140:             )
+  141:
+  142:             grades.append({
+  143:                 'subject': mark.subject,
+  144:                 'raw_mark': score,
+  145:                 'grade': grade_result['grade'],
+  146:                 'points': grade_result['points'],
+  147:                 'is_core': is_core
+  148:             })
+  149:
+  150:             if is_core:
+  151:                 core_subjects.append(grade_result['points'])
+  152:             else:
+  153:                 best_subjects.append(grade_result['points'])
+  154:
+  155:         # Calculate overall
+  156:         if self.calculation:
+  157:             return self._calculate_overall(student, grades, core_subjects, best_subjects)
+  158:         else:
+  159:             return grades
+  160:
+  161:     def _calculate_overall(self, student, grades, core_subjects, best_subjects):
+  162:         """Calculate overall KCSE result"""
+  163:         # Sort best subjects by points descending
+  164:         best_subjects.sort(reverse=True)
+  165:
+  166:         # Take the required number of best subjects
+  167:         if self.calculation:
+  168:             best_count = min(self.calculation.best_subject_count, len(best_subjects))
+  169:             selected_best = best_subjects[:best_count]
+  170:         else:
+  171:             selected_best = best_subjects[:5]
+  172:
+  173:         # Total points = core subjects + best subjects
+  174:         total_points = sum(core_subjects) + sum(selected_best)
+  175:         total_subjects_used = len(core_subjects) + len(selected_best)
+  176:
+  177:         # Calculate mean grade
+  178:         if total_subjects_used > 0:
+  179:             mean_score = total_points / total_subjects_used
+  180:             mean_grade = self._get_mean_grade(mean_score)
+  181:         else:
+  182:             mean_grade = 'E'
+  183:             mean_score = 0
+  184:
+  185:         # Save overall result
+  186:         overall, _created = StudentOverallKCSE.objects.update_or_create(
+  187:             student=student,
+  188:             examination=self.examination,
+  189:             defaults={
+  190:                 'total_points': total_points,
+  191:                 'mean_grade': mean_grade,
+  192:                 'mean_score': mean_score,
+  193:                 'core_subjects_count': len(core_subjects),
+  194:                 'best_subjects_count': len(selected_best),
+  195:                 'total_subjects_used': total_subjects_used,
+  196:             }
+  197:         )
+  198:
+  199:         return {
+  200:             'total_points': total_points,
+  201:             'mean_score': mean_score,
+  202:             'mean_grade': mean_grade,
+  203:             'core_count': len(core_subjects),
+  204:             'best_count': len(selected_best),
+  205:             'total_used': total_subjects_used,
+  206:             'grades': grades
+  207:         }
+  208:
+  209:     def _get_mean_grade(self, mean_score):
+  210:         """Convert mean score to KCSE grade"""
+
+====================================================
+FILE: grading\models.py
+LINES: 250 - 390
+====================================================
+  250:     aggregation_type = models.CharField(max_length=20, choices=AGGREGATION_TYPES, default='WEIGHTED')
+  251:     components = models.ManyToManyField(AssessmentComponent, related_name='aggregations')
+  252:     formula = models.TextField(blank=True, null=True)  # For custom formulas
+  253:     is_active = models.BooleanField(default=True)
+  254:
+  255:     def __str__(self):
+  256:         return self.name
+  257:
+  258:     class Meta:
+  259:         db_table = 'component_aggregations'
+  260:
+  261:
+  262: # ============ STUDENT RESULTS ============
+  263:
+  264: class StudentKCSEGrade(models.Model):
+  265:     """Student's KCSE grade for a subject"""
+  266:     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='kcse_grades')
+  267:     examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name='kcse_grades')
+  268:     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+  269:
+  270:     raw_mark = models.DecimalField(max_digits=5, decimal_places=1)
+  271:     grade = models.CharField(max_length=3)
+  272:     points = models.DecimalField(max_digits=3, decimal_places=1)
+  273:
+  274:     # Whether this subject is counted in overall calculation
+  275:     is_core = models.BooleanField(default=False)
+  276:     is_best_subject = models.BooleanField(default=False)
+  277:
+  278:     created_at = models.DateTimeField(auto_now_add=True)
+  279:     updated_at = models.DateTimeField(auto_now=True)
+  280:
+  281:     def __str__(self):
+  282:         return f"{self.student.admission_number} - {self.subject.name}: {self.grade} ({self.points})"
+  283:
+  284:     class Meta:
+  285:         db_table = 'student_kcse_grades'
+  286:         unique_together = ['student', 'examination', 'subject']
+  287:
+  288:
+  289: class StudentOverallKCSE(models.Model):
+  290:     """Student's overall KCSE result"""
+  291:     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='overall_kcse')
+  292:     examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name='overall_kcse')
+  293:
+  294:     total_points = models.DecimalField(max_digits=5, decimal_places=1)
+  295:     mean_grade = models.CharField(max_length=3)
+  296:     mean_score = models.DecimalField(max_digits=5, decimal_places=1)
+  297:
+  298:     # Breakdown
+  299:     core_subjects_count = models.IntegerField(default=0)
+  300:     best_subjects_count = models.IntegerField(default=0)
+  301:     total_subjects_used = models.IntegerField(default=0)
+  302:
+  303:     position = models.IntegerField(null=True, blank=True)
+  304:
+  305:     created_at = models.DateTimeField(auto_now_add=True)
+  306:     updated_at = models.DateTimeField(auto_now=True)
+  307:
+  308:     def __str__(self):
+  309:         return f"{self.student.admission_number} - {self.mean_grade} ({self.total_points})"
+  310:
+  311:     class Meta:
+  312:         db_table = 'student_overall_kcse'
+  313:         unique_together = ['student', 'examination']
+  314:
+  315:
+  316: class StudentCBAAssessment(models.Model):
+  317:     """Student's CBC assessment result for a rubric"""
+  318:     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='cbc_assessments')
+  319:     examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name='cbc_assessments')
+  320:     rubric = models.ForeignKey(Rubric, on_delete=models.CASCADE)
+  321:     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+  322:     learning_outcome = models.ForeignKey('school.LearningOutcome', on_delete=models.SET_NULL, null=True, blank=True, related_name='cba_assessments')
+  323:
+  324:     # Results per criterion
+  325:     criterion_results = models.JSONField(default=dict)
+  326:     # Example: {"criterion_1": "PL3", "criterion_2": "PL4", ...}
+  327:
+  328:     # Overall result
+  329:     overall_level = models.ForeignKey(PerformanceLevel, on_delete=models.SET_NULL, null=True, related_name='cbc_results')
+  330:     teacher_notes = models.TextField(blank=True, null=True)
+  331:
+  332:     # For component aggregation
+  333:     component = models.ForeignKey(AssessmentComponent, on_delete=models.SET_NULL, null=True, blank=True)
+  334:     score = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+  335:
+  336:     created_at = models.DateTimeField(auto_now_add=True)
+  337:     updated_at = models.DateTimeField(auto_now=True)
+  338:
+  339:     def __str__(self):
+  340:         return f"{self.student.admission_number} - {self.rubric.name}"
+  341:
+  342:     class Meta:
+  343:         db_table = 'student_cbc_assessments'
+  344:         unique_together = ['student', 'examination', 'rubric']
+  345:
+  346:
+  347: class StudentOverallCBA(models.Model):
+  348:     """Student's overall CBC/CBA result"""
+  349:     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='overall_cba')
+  350:     examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name='overall_cba')
+  351:
+  352:     # Overall performance level
+  353:     overall_level = models.ForeignKey(PerformanceLevel, on_delete=models.SET_NULL, null=True)
+  354:
+  355:     # Component scores
+  356:     component_scores = models.JSONField(default=dict)
+  357:     # Example: {"SBA": 78.5, "Summative": 82.0}
+  358:
+  359:     # Aggregated results
+  360:     total_score = models.DecimalField(max_digits=5, decimal_places=1)
+  361:     total_weighted_score = models.DecimalField(max_digits=5, decimal_places=1)
+  362:
+  363:     # Grade equivalent (optional - for reporting)
+  364:     grade_equivalent = models.CharField(max_length=3, blank=True, null=True)
+  365:
+  366:     position = models.IntegerField(null=True, blank=True)
+  367:
+  368:     created_at = models.DateTimeField(auto_now_add=True)
+  369:     updated_at = models.DateTimeField(auto_now=True)
+  370:
+  371:     def __str__(self):
+  372:         return f"{self.student.admission_number} - {self.overall_level.level_code if self.overall_level else 'N/A'}"
+  373:
+  374:     class Meta:
+  375:         db_table = 'student_overall_cba'
+  376:         unique_together = ['student', 'examination']
+  377:
+  378:
+  379: # ============================================================
+  380: # PHASE 3: ASSESSMENT EVIDENCE LAYER
+  381: # Adds discrete tasks, evidence files, observations, feedback.
+  382: # Links existing StudentCBAAssessment to LearningOutcome.
+  383: # ============================================================
+  384:
+  385: class AssessmentTask(models.Model):
+  386:     """A discrete assessment task created by a teacher.
+  387:
+  388:     Examples: "Classroom measurement exercise", "Oral reading",
+  389:     "Group project on water cycle".
+  390:     """
+
+SEARCHING REPORT TEMPLATES...
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\venv\lib\python3.12\site-packages\django\views\templates\default_urlconf.html
+LINE 39: position: relative;
+LINE 98: position: fixed;
+LINE 143: position: relative;
+LINE 167: position: relative;
+LINE 179: position: absolute;
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\venv\lib\python3.12\site-packages\django\views\templates\technical_500.html
+LINE 39: div.context ol { padding-left:30px; margin:0 10px; list-style-position: inside; }
+LINE 43: div.context ol.context-line li span { position:absolute; right:32px; }
+LINE 61: #requestinfo h2, #requestinfo h3 { position:relative; margin-left:-100px; }
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE 25: .eg-sidebar{position:fixed;top:0;left:0;bottom:0;width:var(--eg-sidebar-w);
+LINE 45: .eg-topbar{position:fixed;top:0;left:var(--eg-sidebar-w);right:0;height:64px;
+LINE 52: border:none;background:transparent;color:var(--eg-ink-2);position:relative;
+LINE 55: .eg-badge-dot{position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;
+LINE 83: .stat-card{position:relative;overflow:hidden;border-radius:var(--eg-radius);
+LINE 125: .eg-toast-wrap{position:fixed;top:76px;right:1.5rem;z-index:2000;max-width:360px}
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE 147: <div class="col-md-4"><div class="card-text"><strong>Average Score:</strong> {% if average_mark_score %}{{ average_mark_score|floatformat:1 }}{% else %}-{% endif %}</div></div>
+LINE 199: <thead><tr><th>Grade</th><th>Stream</th><th>Year</th><th>Enrolled</th><th>Assessed</th><th>Marks Entered</th><th>Average</th></tr></thead>
+LINE 209: <td>{% if row.average_score %}{{ row.average_score|floatformat:1 }}{% else %}-{% endif %}</td>
+LINE 257: <thead><tr><th>Student</th><th>Marks Entered</th><th>Average Score</th></tr></thead>
+LINE 263: <td>{% if student.average_score %}{{ student.average_score|floatformat:1 }}{% else %}-{% endif %}</td>
+LINE 306: <td>{{ overall.total_score|default:"-" }}</td>
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE 67: <div class="col-md-3"><div class="p-3 bg-light rounded"><small class="text-muted d-block">Average score</small><strong class="fs-4">{{ average_exam_score|floatformat:1 }}%</strong></div></div>
+LINE 109: <div class="alert alert-light border"><strong>Overall:</strong> {{ selected_exam.overall.score|floatformat:1 }}% · Grade {{ selected_exam.overall.grade }}{% if selected_exam.overall.position %} · Position {{ selected_exam.overall.position }}{% endif %}</div>
+LINE 202: label: 'Average score (%)',
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\view.html
+LINE 35: <th>Average</th>
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\analysis.html
+LINE 11: <div class="row g-4 mb-4"><div class="col-lg-8"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-trophy me-2"></i>Overall top learners</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Position</th><th>Admission</th><th>Learner</th><th>Gender</th><th>Class</th><th>Level</th></tr></thead><tbody>{% for item in ranking %}<tr><td><strong>#{{ item.position }}</strong></td><td>{{ item.student.admission_number }}</td><td>{{ item.student.full_name }}</td><td>{{ item.student.get_gender_display }}</td><td>{{ item.student.current_stream.name }}</td><td><span class="badge bg-success">{{ item.level }}</span></td></tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No overall CBC results recorded.</td></tr>{% endfor %}</tbody></table></div></div></div></div><div class="col-lg-4"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-venus-mars me-2"></i>Gender leaders</div><div class="card-body">{% if best_boy %}<p><small class="text-muted">Best boy</small><br><strong>{{ best_boy.student.full_name }}</strong><br>{{ best_boy.overall_level.level_code|default:'-' }} · {{ best_boy.total_weighted_score }}</p>{% endif %}{% if best_girl %}<p class="mb-0"><small class="text-muted">Best girl</small><br><strong>{{ best_girl.student.full_name }}</strong><br>{{ best_girl.overall_level.level_code|default:'-' }} · {{ best_girl.total_weighted_score }}</p>{% endif %}</div></div></div></div>
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\core\dashboard.html
+LINE 109: <div class="col-lg-7"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-trophy me-2"></i>Top learners in this scope</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Position</th><th>Learner</th><th>Grade / Stream</th><th>Level</th><th>Score</th></tr></thead><tbody>{% for item in cbc_top_learners %}<tr><td><strong>#{{ item.position }}</strong></td><td>{{ item.student.full_name }}<small class="text-muted d-block">{{ item.student.admission_number }}</small></td><td>{{ item.student.current_grade_level.name }} {{ item.student.current_stream.name }}</td><td><span class="badge bg-success">{{ item.level }}</span></td><td>{{ item.score|floatformat:1 }}</td></tr>{% endfor %}</tbody></table></div></div></div></td></tr>
+LINE 117: <div class="card-custom mb-4"><div class="card-header"><i class="fas fa-book-open me-2"></i>Learning-area performance</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Rank</th><th>Learning area</th><th>Average score</th><th>PL4</th><th>PL3</th><th>PL2</th><th>PL1</th><th>Support rate</th></tr></thead><tbody>{% for area in cbc_learning_areas %}<tr><td>{{ forloop.counter }}</td><td><strong>{{ area.name }}</strong></td><td>{% if area.average is not None %}{{ area.average|floatformat:1 }}{% else %}-{% endif %}</td><td>{{ area.levels.PL4 }}</td><td>{{ area.levels.PL3 }}</td><td>{{ area.levels.PL2 }}</td><td>{{ area.levels.PL1 }}</td><td><span class="badge {% if area.support_rate >= 40 %}bg-danger{% elif area.support_rate >= 20 %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ area.support_rate|floatformat:1 }}%</span></td></tr>{% empty %}<tr><td colspan="8" class="text-center text-muted py-4">No learning-area assessments recorded.</td></tr>{% endfor %}</tbody></table></div></div></td>
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\class_report.html
+LINE 30: <h6 class="card-title">Average Score</h6>
+LINE 103: <th>Average</th>
+LINE 109: {% for subject in subject_performances %}
+LINE 142: <th>Average Score</th>
+LINE 155: <td>{{ student.average_score|floatformat:1 }}%</td>
+LINE 156: <td><span class="badge bg-primary">{{ student.overall_grade }}</span></td>
+
+TEMPLATE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\student_report.html
+LINE 30: <span class="badge bg-{% if analysis.overall_grade == 'A' %}success{% elif analysis.overall_grade == 'B' %}info{% elif analysis.overall_grade == 'C' %}warning{% else %}danger{% endif %}">
+LINE 31: {{ analysis.overall_grade }}
+LINE 51: {% for perf in subject_performances %}
+LINE 72: <td><strong>{{ analysis.total_score|floatformat:1 }}</strong></td>
+LINE 76: <td><strong>Average</strong></td>
+LINE 77: <td><strong>{{ analysis.average_score|floatformat:1 }}%</strong></td>
+LINE 78: <td><strong>{{ analysis.overall_grade }}</strong></td>
+LINE 79: <td><strong>{{ analysis.overall_points|floatformat:1 }}</strong></td>
+LINE 81: {% if analysis.position %}
+LINE 82: <span class="badge bg-info">Position: {{ analysis.position }}</span>
+
+SEARCHING REPORT VALUE ASSIGNMENTS...
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_grading2.py
+LINE: 45
+CODE: for name in ['GradingSystem','GradeRule','PerformanceAnalysis','SubjectPerformance','AssessmentScheme','KCSEGradeRule']:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 422
+CODE: total_score = 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\update_core_views.py
+LINE: 65
+CODE: return render(request, 'core/dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 35
+CODE: return render(request, 'school/setup_dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 198
+CODE: return render(request, 'school/setup_dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 216
+CODE: return render(request, 'school/setup_dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 422
+CODE: return render(request, 'school/grade_reallocate.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 538
+CODE: return render(request, 'school/stream_reallocate.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 718
+CODE: return render(request, 'school/grade_reallocate.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 791
+CODE: return render(request, 'school/stream_reallocate.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 21
+CODE: return render(request, 'school/structure.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 85
+CODE: return render(request, 'school/scheme_list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 124
+CODE: return render(request, 'school/scheme_detail.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 141
+CODE: return render(request, 'school/coverage_dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\student_report.html
+LINE: 30
+CODE: <span class="badge bg-{% if analysis.overall_grade == 'A' %}success{% elif analysis.overall_grade == 'B' %}info{% elif analysis.overall_grade == 'C' %}warning{% else %}danger{% endif %}">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 58
+CODE: return render(request, 'teachers/list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 148
+CODE: return render(request, 'teachers/detail.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 217
+CODE: return render(request, 'teachers/edit.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 301
+CODE: return render(request, 'teachers/assign.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 373
+CODE: return render(request, 'teachers/requests.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 637
+CODE: return render(request, 'teachers/request_create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 673
+CODE: return render(request, 'teachers/request_approval.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 741
+CODE: average_score=Avg('marks__score', filter=Q(marks__entered_by=request.user)),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 752
+CODE: average_score=Avg('marks__score'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 801
+CODE: mark_summary = marks_entered.aggregate(average_score=Avg('score'))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 837
+CODE: return render(request, 'teachers/my_status.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 40
+CODE: return render(request, 'class_teachers/list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 86
+CODE: return render(request, 'class_teachers/create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 116
+CODE: return render(request, 'class_teachers/edit.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 130
+CODE: return render(request, 'class_teachers/delete.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 188
+CODE: return render(request, 'class_teachers/requests.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 269
+CODE: return render(request, 'class_teachers/request_create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 313
+CODE: return render(request, 'class_teachers/request_review.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\add_school_report.py
+LINE: 73
+CODE: return render(request, 'reports/school_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 255
+CODE: return render(request, 'students/list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 272
+CODE: average_score = round(sum(scores) / len(scores), 1) if scores else None
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 338
+CODE: return render(request, 'students/detail.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 442
+CODE: return render(request, 'students/create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 553
+CODE: return render(request, 'students/edit.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 579
+CODE: return render(request, 'students/delete.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 645
+CODE: return render(request, 'students/transfer.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 750
+CODE: return render(request, 'students/bulk_transfer.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 914
+CODE: return render(request, 'students/portfolio.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 25
+CODE: return render(request, 'authentication/register.html')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 29
+CODE: return render(request, 'authentication/register.html')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 33
+CODE: return render(request, 'authentication/register.html')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 95
+CODE: return render(request, 'authentication/register.html')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 101
+CODE: return render(request, 'authentication/profile.html', {'user': request.user})
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\authentication\views.py
+LINE: 133
+CODE: return render(request, 'authentication/profile_edit.html', {'user': request.user, 'teacher': teacher})
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 213
+CODE: return render(request, 'marks/entry.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 273
+CODE: return render(request, 'marks/view.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 388
+CODE: return render(request, 'marks/correction.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 446
+CODE: return render(request, 'marks/admin_mark_management.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 548
+CODE: return render(request, 'marks/admin_mark_edit.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 720
+CODE: return render(request, 'marks/admin_mark_create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 64
+CODE: return render(request, 'examinations/list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 145
+CODE: return render(request, 'examinations/create.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 160
+CODE: return render(request, 'examinations/detail.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 170
+CODE: return render(request, 'examinations/analysis.html', {
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 265
+CODE: return render(request, 'examinations/analysis.html', {
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 332
+CODE: return render(request, 'examinations/edit.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 346
+CODE: return render(request, 'examinations/delete.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 370
+CODE: return render(request, 'examinations/change_status.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 104
+CODE: return render(request, 'core/dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 259
+CODE: return render(request, 'core/notifications.html', {'notifications': notifications})
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\add_school_report.py
+LINE: 81
+CODE: return render(request, 'reports/school_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 43
+CODE: return render(request, 'reports/dashboard.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 62
+CODE: return render(request, 'reports/list.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 171
+CODE: total_score = 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 240
+CODE: return render(request, 'reports/class_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 308
+CODE: return render(request, 'reports/school_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 323
+CODE: return render(request, 'reports/detail.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 4
+CODE: from .models import GradingSystem, GradeRule, PerformanceAnalysis, SubjectPerformance
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 40
+CODE: def _get_grade_rule(self, score, subject=None):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 82
+CODE: subject_performances = []
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 83
+CODE: total_score = 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 89
+CODE: grade, grade_name, points = self._get_grade_rule(float(score), mark.subject)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 104
+CODE: average_score = (total_score / total_possible) * 100 if total_possible > 0 else 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 105
+CODE: overall_grade, overall_grade_name, overall_points = self._get_grade_rule(average_score)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 154
+CODE: # Create or update PerformanceAnalysis
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 155
+CODE: analysis, created = PerformanceAnalysis.objects.update_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 185
+CODE: analysis = PerformanceAnalysis.objects.get(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 196
+CODE: analysis = PerformanceAnalysis.objects.get(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 248
+CODE: analyses = PerformanceAnalysis.objects.filter(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 360
+CODE: total_score = models.DecimalField(max_digits=5, decimal_places=1)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 147
+CODE: total_score = 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 644
+CODE: total_score = round(sum(subject_scores.values()) / len(subject_scores), 1) if subject_scores else 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 911
+CODE: total_score = round(sum(subject_scores.values()) / len(subject_scores), 1) if subject_scores else 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 94
+CODE: return render(request, 'grading/process.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 150
+CODE: subject_performances = StudentKCSEGrade.objects.filter(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 175
+CODE: return render(request, 'grading/class_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 203
+CODE: subject_performances = StudentCBAAssessment.objects.filter(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 226
+CODE: return render(request, 'grading/class_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 270
+CODE: return render(request, 'grading/student_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 294
+CODE: return render(request, 'grading/student_report.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 312
+CODE: return render(request, 'grading/systems.html', context)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 14
+CODE: self.grade_rules = self._get_grade_rules()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 26
+CODE: def _get_grade_rules(self):
+
+SEARCHING GRADING CONFIGURATION...
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 13
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 19
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 74
+CODE: # 2. GET CURRICULUMS AND SUBJECTS
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 76
+CODE: print("\n📚 Getting Curriculums and Subjects...")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 78
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 79
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 82
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data.py
+LINE: 83
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_marks2.py
+LINE: 26
+CODE: # 4. Student.current_grade_level vs historical placement
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_marks2.py
+LINE: 32
+CODE: # 5. Does mark_entry use Student.academic_year? Or current_grade_level?
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_grading2.py
+LINE: 71
+CODE: 'grade_level': gl.id if gl else '',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 13
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 19
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 74
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 77
+CODE: curriculum='CBC',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 94
+CODE: {'name': 'Formative Assessment', 'category': 'FORMATIVE', 'weight': 30},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 95
+CODE: {'name': 'Summative Assessment', 'category': 'SUMMATIVE', 'weight': 40},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 96
+CODE: {'name': 'School-Based Assessment', 'category': 'SBA', 'weight': 30},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_complete_test_data.py
+LINE: 97
+CODE: {'name': 'KJSEA Assessment', 'category': 'KJSEA', 'weight': 60},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\update_core_views.py
+LINE: 32
+CODE: students_844 = Student.objects.filter(curriculum__code='844').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\update_core_views.py
+LINE: 33
+CODE: students_cbc = Student.objects.filter(curriculum__code='CBC').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\update_core_views.py
+LINE: 39
+CODE: exams_844 = Examination.objects.filter(curriculum__code='844').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\update_core_views.py
+LINE: 40
+CODE: exams_cbc = Examination.objects.filter(curriculum__code='CBC').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 21
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 27
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 91
+CODE: ('school', 'Curriculum'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 130
+CODE: curriculum_count = Curriculum.objects.count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 137
+CODE: print_info(f"Curriculums: {curriculum_count}")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 144
+CODE: if curriculum_count == 0:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 145
+CODE: print_warning("No curriculums found! Run Phase 2 setup.")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\p.py
+LINE: 187
+CODE: # Check if curriculums have subjects
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 84
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 96
+CODE: # Curriculums
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 97
+CODE: curriculums = Curriculum.objects.all()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 98
+CODE: print(f"  ✅ Curriculums: {curriculums.count()}")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 99
+CODE: for curr in curriculums:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 107
+CODE: print(f"     - {grade.name} ({grade.curriculum.name}) - {students} students")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 142
+CODE: # Breakdown by curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\inspect_system.py
+LINE: 143
+CODE: students_844 = students.filter(curriculum__code='844').count()
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 7
+CODE: from school.models import Curriculum, GradeLevel
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 11
+CODE: # Get 8-4-4 curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 13
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 19
+CODE: curriculum=curriculum_844,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 60
+CODE: except Curriculum.DoesNotExist:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\create_grading_system.py
+LINE: 61
+CODE: print("❌ 8-4-4 curriculum not found. Please run Phase 2 setup first.")
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 13
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 19
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 83
+CODE: # 2. GET CURRICULUMS AND SUBJECTS
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 85
+CODE: print("\n📚 Getting Curriculums and Subjects...")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 87
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 88
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 91
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\generate_test_data_fixed.py
+LINE: 92
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 7
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 24
+CODE: 'curriculums': Curriculum.objects.all(),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 25
+CODE: 'grade_levels': GradeLevel.objects.select_related('curriculum').all(),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 26
+CODE: 'streams': Stream.objects.select_related('grade_level').all(),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 27
+CODE: 'subjects': Subject.objects.select_related('curriculum').all(),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 30
+CODE: 'total_curriculums': Curriculum.objects.count(),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 39
+CODE: # CURRICULUM CRUD
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\setup_views.py
+LINE: 42
+CODE: def curriculum_create(request):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 3
+CODE: AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject, SchoolInfo,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 16
+CODE: @admin.register(Curriculum)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 17
+CODE: class CurriculumAdmin(admin.ModelAdmin):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 23
+CODE: list_display = ('name', 'curriculum', 'level_type', 'level_number', 'order', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 24
+CODE: list_filter = ('curriculum', 'level_type', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 28
+CODE: list_display = ('name', 'code', 'grade_level', 'capacity', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 29
+CODE: list_filter = ('grade_level', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\admin.py
+LINE: 33
+CODE: list_display = ('code', 'name', 'short_name', 'curriculum', 'subject_type', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 49
+CODE: class Curriculum(models.Model):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 50
+CODE: """Curriculum model (8-4-4 or CBC)"""
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 51
+CODE: CURRICULUM_CHOICES = [
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 56
+CODE: code = models.CharField(max_length=10, choices=CURRICULUM_CHOICES, unique=True)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 67
+CODE: db_table = 'curriculums'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 68
+CODE: verbose_name_plural = 'Curriculums'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 80
+CODE: curriculum = models.ForeignKey(Curriculum, on_delete=models.CASCADE, related_name='grade_levels')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\models.py
+LINE: 90
+CODE: return f"{self.curriculum.code} - {self.name}"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 9
+CODE: from .models import AcademicYear, Curriculum, GradeLevel, Stream
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 16
+CODE: self.curriculum = Curriculum.objects.create(code='844', name='8-4-4')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 18
+CODE: curriculum=self.curriculum, level_type='FORM', level_number=1,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 22
+CODE: curriculum=self.curriculum, level_type='FORM', level_number=2,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 26
+CODE: name='East', code='1E', grade_level=self.source_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 29
+CODE: name='West', code='2W', grade_level=self.destination_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 43
+CODE: teacher=self.teacher, grade_level=self.source_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\tests.py
+LINE: 49
+CODE: curriculum=self.curriculum, current_grade_level=self.source_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 10
+CODE: grade_level=source_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 15
+CODE: grade_level=destination_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 22
+CODE: assignment.grade_level = destination_grade
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 24
+CODE: assignment.save(update_fields=['grade_level', 'stream', 'updated_at'])
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 29
+CODE: grade_level=source_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 36
+CODE: grade_level=destination_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 43
+CODE: assignment.grade_level = destination_grade
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\services.py
+LINE: 45
+CODE: assignment.curriculum = destination_grade.curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 17
+CODE: # Curriculum URLs
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 18
+CODE: path('curriculum/create/', setup_views.curriculum_create, name='curriculum_create'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 19
+CODE: path('curriculum/<int:curriculum_id>/edit/', setup_views.curriculum_edit, name='curriculum_edit'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 20
+CODE: path('curriculum/<int:curriculum_id>/delete/', setup_views.curriculum_delete, name='curriculum_delete'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 34
+CODE: path('grade-level/create/', setup_views.grade_level_create, name='grade_level_create'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 35
+CODE: path('grade-level/<int:grade_id>/edit/', setup_views.grade_level_edit, name='grade_level_edit'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 36
+CODE: path('grade-level/<int:grade_id>/delete/', setup_views.grade_level_delete, name='grade_level_delete'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\urls.py
+LINE: 49
+CODE: path('api/grade-levels/', setup_views.api_get_grade_levels, name='api_grade_levels'),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 8
+CODE: from .models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 16
+CODE: 'curriculums': Curriculum.objects.filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 17
+CODE: 'grade_levels': GradeLevel.objects.select_related('curriculum').filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 18
+CODE: 'streams': Stream.objects.select_related('grade_level').filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 19
+CODE: 'subjects': Subject.objects.select_related('curriculum').filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 25
+CODE: def get_grade_levels(request):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 26
+CODE: """API endpoint to get grade levels by curriculum"""
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\school\views.py
+LINE: 27
+CODE: curriculum_id = request.GET.get('curriculum_id')
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 31
+CODE: .eg-brand{display:flex;align-items:center;gap:.6rem;color:#fff;font-weight:800;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 36
+CODE: text-transform:uppercase;color:#818cf8;padding:.4rem .75rem;font-weight:700}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 39
+CODE: font-size:.9rem;font-weight:500;transition:all .15s}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 49
+CODE: .eg-topbar .eg-title{font-weight:700;font-size:1.05rem;color:var(--eg-ink)}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 59
+CODE: color:#fff;display:grid;place-items:center;font-weight:700;font-size:.85rem}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 74
+CODE: .eg-page-head h1{font-size:1.55rem;font-weight:800;margin:0;letter-spacing:-.02em}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 81
+CODE: font-weight:700;padding:1rem 1.25rem;border-radius:var(--eg-radius) var(--eg-radius) 0 0 !important}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\base.html
+LINE: 89
+CODE: .stat-card .stat-val{font-size:1.6rem;font-weight:800;line-height:1}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\edit.html
+LINE: 31
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\edit.html
+LINE: 32
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\edit.html
+LINE: 34
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\edit.html
+LINE: 35
+CODE: <option value="{{ grade.id }}" {% if class_teacher.grade_level.id == grade.id %}selected{% endif %}>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\create.html
+LINE: 29
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\create.html
+LINE: 30
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\create.html
+LINE: 32
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\list.html
+LINE: 20
+CODE: <select class="form-select" name="grade_level">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\list.html
+LINE: 22
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\list.html
+LINE: 81
+CODE: <td>{{ ct.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\class_teachers\delete.html
+LINE: 21
+CODE: {{ class_teacher.grade_level.name }} - {{ class_teacher.stream.name }}<br>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 41
+CODE: <div class="stat-label">Curriculums</div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 42
+CODE: <div class="stat-number">{{ total_curriculums|default:0 }}</div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 121
+CODE: <button class="quick-action" data-bs-toggle="modal" data-bs-target="#addCurriculumModal">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 123
+CODE: <span>Curriculum</span>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 135
+CODE: <!-- CURRICULUM SECTION -->
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 139
+CODE: <i class="fas fa-book me-2"></i>Curriculums
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 140
+CODE: <button class="btn btn-sm btn-secondary float-end" data-bs-toggle="modal" data-bs-target="#addCurriculumModal">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\setup_dashboard.html
+LINE: 141
+CODE: <i class="fas fa-plus"></i> Add Curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\stream_reallocate.html
+LINE: 28
+CODE: <strong>Stream:</strong> {{ stream.name }} ({{ stream.code }}) - {{ stream.grade_level.name }}<br>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\stream_reallocate.html
+LINE: 55
+CODE: <option value="{{ ts.id }}">{{ ts.name }} ({{ ts.grade_level.name }})</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\scheme_detail.html
+LINE: 10
+CODE: <h4 class="mb-1">{{ scheme.learning_area.name }} — {{ scheme.grade_level.name }}</h4>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\coverage_dashboard.html
+LINE: 3
+CODE: {% block page_title %}Curriculum Coverage{% endblock %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\coverage_dashboard.html
+LINE: 5
+CODE: <h4 class="mb-3">Curriculum Coverage</h4>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\coverage_dashboard.html
+LINE: 15
+CODE: <td>{{ s.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\grade_reallocate.html
+LINE: 28
+CODE: <strong>Grade Level:</strong> {{ grade.name }} ({{ grade.curriculum.name }})<br>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\grade_reallocate.html
+LINE: 56
+CODE: <option value="{{ tg.id }}">{{ tg.name }} ({{ tg.curriculum.name }})</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\grade_reallocate.html
+LINE: 66
+CODE: <option value="{{ ts.id }}" data-grade="{{ ts.grade_level_id }}">{{ ts.name }} ({{ ts.grade_level.name }})</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 63
+CODE: <!-- Curriculums -->
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 66
+CODE: <h5 class="mb-0"><i class="fas fa-book"></i> Curriculums</h5>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 70
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 74
+CODE: <h5 class="card-title">{{ curriculum.name }}</h5>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 75
+CODE: <p class="card-text"><code>{{ curriculum.code }}</code></p>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 76
+CODE: <span class="badge bg-{% if curriculum.is_active %}success{% else %}danger{% endif %}">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 77
+CODE: {% if curriculum.is_active %}Active{% else %}Inactive{% endif %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\structure.html
+LINE: 84
+CODE: <p class="text-center text-muted">No curriculums found</p>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\school\scheme_list.html
+LINE: 40
+CODE: <td>{{ s.grade_level.name }}</td>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\request_create.html
+LINE: 49
+CODE: <label for="grade_level" class="form-label fw-bold">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\request_create.html
+LINE: 50
+CODE: <select class="form-select form-select-lg" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\request_create.html
+LINE: 52
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\requests.html
+LINE: 69
+CODE: <td>{{ req.grade_level.name|default:"-" }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\requests.html
+LINE: 123
+CODE: <li><strong>Grade:</strong> {{ req.grade_level.name|default:"-" }}</li>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\requests.html
+LINE: 192
+CODE: <li><strong>Grade:</strong> {{ req.grade_level.name|default:"-" }}</li>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\detail.html
+LINE: 59
+CODE: <div class="card-custom mb-4"><div class="card-header d-flex justify-content-between align-items-center"><span><i class="fas fa-chalkboard-user me-2"></i>Subjects and Classes Taught</span><a href="{% url 'teachers:assign' teacher.id %}" class="btn btn-sm btn-primary"><i class="fas fa-plus"></i> Add Assignment</a></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom table-hover mb-0"><thead><tr><th>Subject</th><th>Grade/Form</th><th>Stream</th><th>Academic Year</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>{% for assignment in assignments %}<tr><td><strong>{{ assignment.subject.name }}</strong><small class="text-muted d-block">{{ assignment.curriculum.name }}</small></td><td>{{ assignment.grade_level.name }}</td><td>{{ assignment.stream.name }}</td><td>{{ assignment.academic_year.year }}</td><td>{% if assignment.is_class_teacher %}<span class="badge bg-info">Class Teacher</span>{% else %}<span class="badge bg-light text-dark">Subject Teacher</span>{% endif %}</td><td><span class="badge bg-success">{{ assignment.get_status_display }}</span></td><td>{% if is_admin %}<form method="post" action="{% url 'teachers:assignment_delete' assignment.id %}">{% csrf_token %}<button class="btn btn-sm btn-outline-danger" title="Remove assignment" onclick="return confirm('Remove this assignment?')"><i class="fas fa-trash"></i></button></form>{% endif %}</td></tr>{% empty %}<tr><td colspan="7" class="text-center text-muted py-4">No subject or class assignments yet.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\detail.html
+LINE: 61
+CODE: <div class="card-custom mb-4"><div class="card-header"><i class="fas fa-users-gear me-2"></i>Class Teacher Responsibilities</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Grade/Form</th><th>Stream</th><th>Academic Year</th><th>Status</th></tr></thead><tbody>{% for item in class_teacher %}<tr><td>{{ item.grade_level.name }}</td><td>{{ item.stream.name }}</td><td>{{ item.academic_year.year }}</td><td><span class="badge bg-success">Active</span></td></tr>{% empty %}<tr><td colspan="4" class="text-center text-muted py-4">No class-teacher role assigned.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\detail.html
+LINE: 63
+CODE: <div class="card-custom"><div class="card-header"><i class="fas fa-clipboard-list me-2"></i>Recent Assignment Requests</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Type</th><th>Subject</th><th>Class</th><th>Status</th><th>Date</th></tr></thead><tbody>{% for item in requests|slice:':10' %}<tr><td>{{ item.get_request_type_display }}</td><td>{{ item.subject.name|default:'-' }}</td><td>{{ item.grade_level.name|default:'-' }} {{ item.stream.name|default:'' }}</td><td>{{ item.get_status_display }}</td><td>{{ item.requested_date|date:'d M Y' }}</td></tr>{% empty %}<tr><td colspan="5" class="text-center text-muted py-4">No assignment requests.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 74
+CODE: <td>{{ assignment.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 99
+CODE: <td>{{ record.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 159
+CODE: <td>{{ submission.grade_level.name }} {{ submission.stream.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 178
+CODE: <td>{{ mark.grade_level.name }} {{ mark.stream.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 203
+CODE: <td>{{ row.current_grade_level__name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 235
+CODE: <td>{{ history.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\my_status.html
+LINE: 334
+CODE: {{ assignment.grade_level.name }} ·
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 18
+CODE: <label for="curriculum" class="form-label">Curriculum <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 19
+CODE: <select class="form-select" id="curriculum" name="curriculum" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 20
+CODE: <option value="">Select Curriculum</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 21
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 22
+CODE: <option value="{{ curriculum.id }}">{{ curriculum.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 36
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 37
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\teachers\assign.html
+LINE: 39
+CODE: {% for grade in grade_levels %}
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\admin\reallocate_grade_delete.html
+LINE: 15
+CODE: {% for stream in destination_streams %}<option value="{{ stream.pk }}" data-grade="{{ stream.grade_level_id }}">{{ stream }}</option>{% endfor %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 19
+CODE: from {{ student.current_grade_level.name|default:"-" }}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 35
+CODE: <label for="grade_level" class="form-label">New Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 36
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 38
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 48
+CODE: <option value="{{ stream.id }}" {% if student.current_stream_id == stream.id %}selected{% endif %} data-grade="{{ stream.grade_level_id }}">{{ stream.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\transfer.html
+LINE: 70
+CODE: const gradeSelect = document.getElementById('grade_level');
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 81
+CODE: <label for="curriculum" class="form-label">Curriculum <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 82
+CODE: <select class="form-select" id="curriculum" name="curriculum" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 83
+CODE: <option value="">Select Curriculum</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 84
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 85
+CODE: <option value="{{ curriculum.id }}" {% if student.curriculum_id == curriculum.id %}selected{% endif %}>{{ curriculum.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 90
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 91
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\edit.html
+LINE: 93
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 15
+CODE: place-items: center; font-size: 2rem; font-weight: 800;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 22
+CODE: .portfolio-stat .num { font-size: 1.5rem; font-weight: 800; }
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 26
+CODE: font-size: 1.15rem; font-weight: 700; color: #1e1b4b;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 31
+CODE: font-size: 1rem; font-weight: 700; color: #312e81;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 36
+CODE: font-size: 0.9rem; font-weight: 600; color: #6b7280;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 48
+CODE: font-size: 0.75rem; font-weight: 700;
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 98
+CODE: {% if student.current_grade_level %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\portfolio.html
+LINE: 99
+CODE: · <i class="fa-solid fa-graduation-cap me-1"></i>{{ student.current_grade_level.name }}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 81
+CODE: <label for="curriculum" class="form-label">Curriculum <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 82
+CODE: <select class="form-select" id="curriculum" name="curriculum" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 83
+CODE: <option value="">Select Curriculum</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 84
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 85
+CODE: <option value="{{ curriculum.id }}">{{ curriculum.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 90
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 91
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\create.html
+LINE: 93
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\list.html
+LINE: 41
+CODE: <select class="form-select" name="grade_level">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\list.html
+LINE: 43
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\list.html
+LINE: 44
+CODE: <option value="{{ grade.id }}" {% if selected_grade_level == grade.id|stringformat:'s' %}selected{% endif %}>{{ grade.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\list.html
+LINE: 105
+CODE: <td>{{ student.current_grade_level.name|default:"-" }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 83
+CODE: <thead><tr><th>Examination</th><th>Date</th><th>Curriculum</th><th>Score</th><th>Grade</th><th></th></tr></thead>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 89
+CODE: <td>{{ result.curriculum }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 102
+CODE: <div><h6 class="mb-1">{{ selected_exam.exam.name }}</h6><small class="text-muted">{{ selected_exam.exam.start_date|date:'d M Y' }} · {{ selected_exam.exam.term.name }} · {{ selected_exam.exam.curriculum.code }}</small></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 137
+CODE: <div class="col-md-6"><strong>Grade/Form</strong><br>{{ student.current_grade_level.name|default:'-' }}</div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 139
+CODE: <div class="col-md-6"><strong>Curriculum</strong><br>{{ student.curriculum.name|default:'-' }}</div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\detail.html
+LINE: 171
+CODE: <td>{{ record.grade_level.name|default:'-' }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\delete.html
+LINE: 22
+CODE: Grade: {{ student.current_grade_level.name|default:"-" }}<br>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 26
+CODE: <label for="source_grade_level" class="form-label">Grade Level <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 27
+CODE: <select class="form-select" id="source_grade_level" name="source_grade_level">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 29
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 30
+CODE: <option value="{{ grade.id }}" {% if grade.id|stringformat:"s" == source_grade_level %}selected{% endif %}>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 41
+CODE: <option value="{{ stream.id }}" {% if stream.id|stringformat:"s" == source_stream %}selected{% endif %} data-grade="{{ stream.grade_level_id }}">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 83
+CODE: <input type="hidden" name="source_grade_level" value="{{ source_grade_level }}">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 103
+CODE: <td>{{ student.current_grade_level.name|default:"-" }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\students\bulk_transfer.html
+LINE: 113
+CODE: <label for="destination_grade_level" class="form-label">Destination Grade Level <span class="text-danger">*</span></label>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\authentication\profile.html
+LINE: 14
+CODE: color:#fff;display:grid;place-items:center;font-size:2.25rem;font-weight:800">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\view.html
+LINE: 20
+CODE: {{ exam.name }} - {{ grade_level.name }} {{ stream.name }}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_edit.html
+LINE: 51
+CODE: <td>{{ mark_entry.grade_level.name }} {{ mark_entry.stream.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_create.html
+LINE: 28
+CODE: {% if s.current_grade_level %} ({{ s.current_grade_level.name }}{% if s.current_stream %} / {{ s.current_stream.name }}{% endif %}){% endif %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 11
+CODE: <a href="{% url 'marks:view' %}?exam_id={{ selected_exam.id|default:'' }}&grade_level_id={{ selected_grade.id|default:'' }}&stream_id={{ selected_stream.id|default:'' }}"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 42
+CODE: <option value="{{ assignment.subject.id }}" data-grade="{{ assignment.grade_level.id }}" data-stream="{{ assignment.stream.id }}" {% if assignment.subject.id == subject_id|add:0 %}selected{% endif %}>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 43
+CODE: {{ assignment.subject.name }} — {{ assignment.grade_level.name }} {{ assignment.stream.name }}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 50
+CODE: <select class="form-select" name="grade_level_id" id="gradeSelect" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 53
+CODE: <option value="{{ assignment.grade_level.id }}" {% if assignment.grade_level.id == grade_level_id|add:0 %}selected{% endif %}>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 54
+CODE: {{ assignment.grade_level.name }}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 100
+CODE: <input type="hidden" name="grade_level_id" value="{{ grade_level_id }}">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\entry.html
+LINE: 122
+CODE: <br><small class="text-muted">{{ student.current_grade_level.name }} {{ student.current_stream.name }}</small>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_management.html
+LINE: 46
+CODE: <label for="grade_level_id" class="form-label">Grade</label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_management.html
+LINE: 47
+CODE: <select class="form-select" id="grade_level_id" name="grade_level_id">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_management.html
+LINE: 49
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_management.html
+LINE: 50
+CODE: <option value="{{ grade.id }}" {% if grade.id|stringformat:"s" == grade_level_id %}selected{% endif %}>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\marks\admin_mark_management.html
+LINE: 118
+CODE: <td>{{ mark.grade_level.name }} {{ mark.stream.name }}</td>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 66
+CODE: <label for="curriculum" class="form-label">Curriculum <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 67
+CODE: <select class="form-select" id="curriculum" name="curriculum" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 68
+CODE: <option value="">Select Curriculum</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 69
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 70
+CODE: <option value="{{ curriculum.id }}" {% if exam.curriculum.id == curriculum.id %}selected{% endif %}>{{ curriculum.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 75
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 76
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\edit.html
+LINE: 78
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 66
+CODE: <label for="curriculum" class="form-label">Curriculum <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 67
+CODE: <select class="form-select" id="curriculum" name="curriculum" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 68
+CODE: <option value="">Select Curriculum</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 69
+CODE: {% for curriculum in curriculums %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 70
+CODE: <option value="{{ curriculum.id }}">{{ curriculum.name }}</option>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 75
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 76
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\create.html
+LINE: 78
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\list.html
+LINE: 39
+CODE: <select class="form-select" name="grade_level">
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\list.html
+LINE: 41
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\list.html
+LINE: 88
+CODE: <td>{{ exam.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\detail.html
+LINE: 17
+CODE: {% if exam.curriculum.code == 'CBC' %}<a href="{% url 'examinations:analysis' exam.id %}" class="btn btn-success"><i class="fas fa-chart-line"></i> Assessment Analysis</a>{% endif %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\detail.html
+LINE: 41
+CODE: <p><strong>Curriculum:</strong> {{ exam.curriculum.name }}</p>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\detail.html
+LINE: 42
+CODE: <p><strong>Grade:</strong> {{ exam.grade_level.name }}</p>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\analysis.html
+LINE: 7
+CODE: <div class="d-flex justify-content-between align-items-start mb-4"><div><a href="{% url 'examinations:detail' exam.id %}" class="btn btn-sm btn-outline-secondary mb-2"><i class="fas fa-arrow-left"></i> Back to Assessment</a><h2 class="mb-1">{{ exam.name }}</h2><p class="text-muted mb-0">{{ exam.academic_year.year }} · {{ exam.term.name }} · {{ exam.grade_level.name }} · {{ exam.curriculum.name }}</p></div><span class="badge bg-primary fs-6">{{ scope_label }}</span></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\examinations\analysis.html
+LINE: 11
+CODE: <div class="row g-4 mb-4"><div class="col-lg-8"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-trophy me-2"></i>Overall top learners</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Position</th><th>Admission</th><th>Learner</th><th>Gender</th><th>Class</th><th>Level</th></tr></thead><tbody>{% for item in ranking %}<tr><td><strong>#{{ item.position }}</strong></td><td>{{ item.student.admission_number }}</td><td>{{ item.student.full_name }}</td><td>{{ item.student.get_gender_display }}</td><td>{{ item.student.current_stream.name }}</td><td><span class="badge bg-success">{{ item.level }}</span></td></tr>{% empty %}<tr><td colspan="6" class="text-center text-muted py-4">No overall CBC results recorded.</td></tr>{% endfor %}</tbody></table></div></div></div></div><div class="col-lg-4"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-venus-mars me-2"></i>Gender leaders</div><div class="card-body">{% if best_boy %}<p><small class="text-muted">Best boy</small><br><strong>{{ best_boy.student.full_name }}</strong><br>{{ best_boy.overall_level.level_code|default:'-' }} · {{ best_boy.total_weighted_score }}</p>{% endif %}{% if best_girl %}<p class="mb-0"><small class="text-muted">Best girl</small><br><strong>{{ best_girl.student.full_name }}</strong><br>{{ best_girl.overall_level.level_code|default:'-' }} · {{ best_girl.total_weighted_score }}</p>{% endif %}</div></div></div></div>
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\core\dashboard.html
+LINE: 53
+CODE: <td>{{ assignment.grade_level.name }}</td>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\core\dashboard.html
+LINE: 57
+CODE: <a href="{% url 'marks:entry' %}?grade_level_id={{ assignment.grade_level.id }}&stream_id={{ assignment.stream.id }}" class="btn btn-sm btn-outline-success"><i class="fas fa-pen"></i> Enter Marks</a>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\core\dashboard.html
+LINE: 109
+CODE: <div class="col-lg-7"><div class="card-custom h-100"><div class="card-header"><i class="fas fa-trophy me-2"></i>Top learners in this scope</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Position</th><th>Learner</th><th>Grade / Stream</th><th>Level</th><th>Score</th></tr></thead><tbody>{% for item in cbc_top_learners %}<tr><td><strong>#{{ item.position }}</strong></td><td>{{ item.student.full_name }}<small class="text-muted d-block">{{ item.student.admission_number }}</small></td><td>{{ item.student.current_grade_level.name }} {{ item.student.current_stream.name }}</td><td><span class="badge bg-success">{{ item.level }}</span></td><td>{{ item.score|floatformat:1 }}</td></tr>{% endfor %}</tbody></table></div></div></div></td></tr>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\reports\school_report.html
+LINE: 8
+CODE: <div class="card-custom"><div class="card-header"><i class="fas fa-layer-group me-2"></i>Students by Grade/Form</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-custom mb-0"><thead><tr><th>Grade/Form</th><th>Curriculum</th><th>Students</th></tr></thead><tbody>{% for grade in grade_stats %}<tr><td>{{ grade.name }}</td><td>{{ grade.curriculum }}</td><td>{{ grade.students }}</td></tr>{% empty %}<tr><td colspan="3" class="text-center text-muted py-4">No student distribution data available.</td></tr>{% endfor %}</tbody></table></div></div></div>
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\reports\class_report.html
+LINE: 17
+CODE: <div class="mb-3"><label for="grade_level" class="form-label">Grade/Form</label><select class="form-select" name="grade_level" id="grade_level" required><option value="">Select Grade</option>{% for grade in grade_levels %}<option value="{{ grade.id }}">{{ grade.name }}</option>{% endfor %}</select></div>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\reports\class_report.html
+LINE: 18
+CODE: <div class="mb-3"><label for="stream" class="form-label">Stream</label><select class="form-select" name="stream" id="stream" required><option value="">Select Stream</option>{% for stream in streams %}<option value="{{ stream.id }}">{{ stream.grade_level.name }} - {{ stream.name }}</option>{% endfor %}</select></div>
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\systems.html
+LINE: 38
+CODE: <tr><th>Name</th><th>Curriculum</th><th>Status</th></tr>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\systems.html
+LINE: 44
+CODE: <td>{{ scheme.get_curriculum_display|default:scheme.curriculum }}</td>
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\student_report.html
+LINE: 21
+CODE: <p><strong>Grade:</strong> {{ student.current_grade_level.name|default:"-" }}</p>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\process.html
+LINE: 32
+CODE: <label for="grade_level" class="form-label">Grade/Form <span class="text-danger">*</span></label>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\process.html
+LINE: 33
+CODE: <select class="form-select" id="grade_level" name="grade_level" required>
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\templates\grading\process.html
+LINE: 35
+CODE: {% for grade in grade_levels %}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\admin.py
+LINE: 16
+CODE: list_display = ('teacher', 'subject', 'grade_level', 'stream',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\admin.py
+LINE: 18
+CODE: list_filter = ('status', 'academic_year', 'grade_level', 'stream', 'is_class_teacher')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\admin.py
+LINE: 27
+CODE: list_display = ('teacher', 'grade_level', 'stream', 'academic_year', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\admin.py
+LINE: 28
+CODE: list_filter = ('is_active', 'academic_year', 'grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 5
+CODE: from school.models import Subject, GradeLevel, Stream, AcademicYear, Curriculum, Term
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 86
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 90
+CODE: curriculum = models.ForeignKey(Curriculum, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 103
+CODE: return f"{self.teacher.full_name} - {self.subject.name} - {self.grade_level.name} {self.stream.name}"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 108
+CODE: unique_together = ['teacher', 'subject', 'grade_level', 'stream', 'academic_year']
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 134
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE, null=True, blank=True)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 156
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\models.py
+LINE: 165
+CODE: return f"{self.teacher.full_name} - {self.grade_level.name} {self.stream.name} ({self.academic_year.year})"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 12
+CODE: from school.models import Subject, GradeLevel, Stream, AcademicYear, Curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 133
+CODE: 'subject', 'grade_level', 'stream', 'academic_year', 'curriculum'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 134
+CODE: ).order_by('-academic_year__year', 'grade_level__order', 'subject__name')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 138
+CODE: ).select_related('grade_level', 'stream', 'academic_year')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 231
+CODE: grade_level_id = request.POST.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 234
+CODE: curriculum_id = request.POST.get('curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 241
+CODE: grade_level_id=grade_level_id,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\views.py
+LINE: 254
+CODE: grade_level_id=grade_level_id,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 7
+CODE: from school.models import GradeLevel, Stream, AcademicYear, Curriculum, Term, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 14
+CODE: 'teacher', 'grade_level', 'stream', 'academic_year'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 18
+CODE: grade_level_id = request.GET.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 19
+CODE: if grade_level_id:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 20
+CODE: class_teachers = class_teachers.filter(grade_level_id=grade_level_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 36
+CODE: 'grade_levels': GradeLevel.objects.filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 49
+CODE: grade_level_id = request.POST.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\teachers\class_teacher_views.py
+LINE: 56
+CODE: grade_level_id=grade_level_id,
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 12
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 61
+CODE: # 1. GET CURRICULUMS AND SUBJECTS
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 63
+CODE: print("\n📚 Getting Curriculums and Subjects...")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 65
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 66
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 68
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 69
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_test_data_final.py
+LINE: 80
+CODE: grade_levels_844 = {}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\add_school_report.py
+LINE: 18
+CODE: student_count = Student.objects.filter(current_grade_level=grade, is_active=True).count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\add_school_report.py
+LINE: 23
+CODE: 'curriculum': grade.curriculum.name
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 12
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 18
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 65
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 66
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 68
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 69
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 80
+CODE: grade_levels_844 = {}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\generate_quick_data.py
+LINE: 83
+CODE: curriculum=curriculum_844,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 6
+CODE: from grading.models import AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation, PerformanceLevel
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 7
+CODE: from school.models import Curriculum, AcademicYear
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 31
+CODE: curriculum_844 = Curriculum.objects.get(code="844")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 34
+CODE: curriculum="844",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 68
+CODE: calc, created = KCSEOverallCalculation.objects.get_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 70
+CODE: name="KCSE Standard Calculation",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 72
+CODE: "calculation_type": "STANDARD",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_data.py
+LINE: 73
+CODE: "best_subject_count": 5,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 6
+CODE: from grading.models import AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation, PerformanceLevel
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 7
+CODE: from school.models import Curriculum, GradeLevel, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 17
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 21
+CODE: curriculum='844',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 66
+CODE: # Create KCSE overall calculation
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 67
+CODE: calc, created = KCSEOverallCalculation.objects.get_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 69
+CODE: name='KCSE Standard Calculation',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_grading_systems.py
+LINE: 71
+CODE: 'calculation_type': 'STANDARD',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 28
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Stream, Subject, Term
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 65
+CODE: cbc = first_or_fail(Curriculum.objects.filter(code='CBC', is_active=True), 'active CBC curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 66
+CODE: grade = first_or_fail(GradeLevel.objects.filter(curriculum=cbc, is_active=True), 'active CBC grade level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 69
+CODE: subjects = list(Subject.objects.filter(curriculum=cbc, is_active=True).order_by('id')[:5])
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 73
+CODE: streams = list(Stream.objects.filter(grade_level=grade, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 78
+CODE: curriculum=cbc,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 79
+CODE: current_grade_level=grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_cbc_assessment_demo.py
+LINE: 93
+CODE: 'curriculum': cbc,
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 5
+CODE: from school.models import Curriculum, GradeLevel, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 7
+CODE: # Create Curriculums
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 8
+CODE: curriculums_data = [
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 9
+CODE: {'code': '844', 'name': '8-4-4', 'description': 'Traditional 8-4-4 curriculum for forms 1-4'},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 10
+CODE: {'code': 'CBC', 'name': 'CBC', 'description': 'Competency Based Curriculum for grades 1-12'},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 13
+CODE: for data in curriculums_data:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 14
+CODE: curriculum, created = Curriculum.objects.get_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\create_school_data.py
+LINE: 19
+CODE: print(f"✅ Created curriculum: {curriculum.name}")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 12
+CODE: 2. Pick the first LOCKED/PUBLISHED exam per curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 30
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 34
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 90
+CODE: kcse_scheme = AssessmentScheme.objects.filter(curriculum="844", is_active=True).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 97
+CODE: KCSEOverallCalculation.objects.filter(scheme=kcse_scheme).delete()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 108
+CODE: calc = KCSEOverallCalculation.objects.filter(scheme=kcse_scheme).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 110
+CODE: info(f"  → Overall calculation: {calc.name} (best {calc.best_subject_count} + core)")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\seed_assessments.py
+LINE: 116
+CODE: cbc_scheme = AssessmentScheme.objects.filter(curriculum="CBC", is_active=True).first()
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 16
+CODE: "assessment_schemes", "kcse_grade_rules", "kcse_overall_calculations",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 47
+CODE: curriculum VARCHAR(10) NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 79
+CODE: CREATE TABLE IF NOT EXISTS kcse_overall_calculations (
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 83
+CODE: calculation_type VARCHAR(20) NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 84
+CODE: best_subject_count INTEGER NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 91
+CODE: print("  ✅ Created kcse_overall_calculations")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 114
+CODE: weight DECIMAL NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\scripts_legacy\fix_grading.py
+LINE: 128
+CODE: grade_level_id INTEGER,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\admin.py
+LINE: 7
+CODE: 'current_grade_level', 'current_stream', 'status', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\admin.py
+LINE: 8
+CODE: list_filter = ('status', 'is_active', 'current_grade_level', 'current_stream', 'curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\admin.py
+LINE: 14
+CODE: list_display = ('student', 'academic_year', 'grade_level', 'stream', 'is_current')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\admin.py
+LINE: 15
+CODE: list_filter = ('is_current', 'academic_year', 'grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\models.py
+LINE: 4
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Stream
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\models.py
+LINE: 39
+CODE: curriculum = models.ForeignKey(Curriculum, on_delete=models.SET_NULL, null=True)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\models.py
+LINE: 40
+CODE: current_grade_level = models.ForeignKey(GradeLevel, on_delete=models.SET_NULL, null=True, related_name='students')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\models.py
+LINE: 84
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.SET_NULL, null=True)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\models.py
+LINE: 90
+CODE: return f"{self.student.admission_number} - {self.grade_level} - {self.academic_year}"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 9
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Stream
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 39
+CODE: def _validate_placement(grade_level_id, stream_id, academic_year_id, curriculum_id=None):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 40
+CODE: grade_level_id = _positive_id(grade_level_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 43
+CODE: curriculum_id = _positive_id(curriculum_id) if curriculum_id is not None else None
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 45
+CODE: grade_level = GradeLevel.objects.filter(id=grade_level_id, is_active=True).first() if grade_level_id else None
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 48
+CODE: curriculum = Curriculum.objects.filter(id=curriculum_id, is_active=True).first() if curriculum_id else None
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 50
+CODE: if not grade_level or not stream or not academic_year:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\students\views.py
+LINE: 52
+CODE: if stream.grade_level_id != grade_level.id:
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\admin.py
+LINE: 8
+CODE: list_filter = ('status', 'examination', 'subject', 'grade_level', 'stream')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\admin.py
+LINE: 14
+CODE: list_display = ('teacher', 'examination', 'subject', 'grade_level',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\admin.py
+LINE: 16
+CODE: list_filter = ('status', 'examination', 'grade_level', 'stream')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\models.py
+LINE: 21
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\models.py
+LINE: 63
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\models.py
+LINE: 79
+CODE: unique_together = ['teacher', 'examination', 'subject', 'grade_level', 'stream']
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 49
+CODE: ).select_related('subject', 'grade_level', 'stream', 'academic_year')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 54
+CODE: grade_level_id = request.GET.get('grade_level_id')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 64
+CODE: if exam_id and subject_id and grade_level_id and stream_id:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 67
+CODE: selected_grade = get_object_or_404(GradeLevel, id=grade_level_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 72
+CODE: current_grade_level=selected_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 81
+CODE: grade_level=selected_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 88
+CODE: grade_level=selected_grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\marks\views.py
+LINE: 117
+CODE: grade_level_id = request.POST.get('grade_level_id')
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\admin.py
+LINE: 7
+CODE: 'curriculum', 'grade_level', 'status', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\admin.py
+LINE: 8
+CODE: list_filter = ('exam_type', 'status', 'is_active', 'academic_year', 'curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\admin.py
+LINE: 14
+CODE: list_display = ('examination', 'grade_level', 'stream', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\admin.py
+LINE: 15
+CODE: list_filter = ('is_active', 'grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 4
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 35
+CODE: curriculum = models.ForeignKey(Curriculum, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 36
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 68
+CODE: unique_together = ['academic_year', 'term', 'grade_level', 'code']
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 74
+CODE: grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 80
+CODE: return f"{self.examination.code} - {self.grade_level.name} {self.stream.name}"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\models.py
+LINE: 84
+CODE: unique_together = ['examination', 'grade_level', 'stream']
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 9
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 22
+CODE: 'academic_year', 'term', 'curriculum', 'grade_level'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 34
+CODE: grade_level_id = request.GET.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 35
+CODE: if grade_level_id:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 36
+CODE: examinations = examinations.filter(grade_level_id=grade_level_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 60
+CODE: 'grade_levels': GradeLevel.objects.filter(is_active=True),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 80
+CODE: curriculum_id = request.POST.get('curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\examinations\views.py
+LINE: 81
+CODE: grade_level_id = request.POST.get('grade_level')
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\permissions.py
+LINE: 19
+CODE: 'subject': subject, 'grade_level': grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\permissions.py
+LINE: 220
+CODE: "subject", "grade_level", "stream",
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\models.py
+LINE: 101
+CODE: grade_level = models.ForeignKey(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\models.py
+LINE: 135
+CODE: if self.grade_level:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\models.py
+LINE: 136
+CODE: parts.append(self.grade_level.name)
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 40
+CODE: 'teacher', 'grade_level', 'stream', 'academic_year'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 50
+CODE: ).select_related('grade_level', 'stream', 'academic_year')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 60
+CODE: 'teacher', 'subject', 'grade_level', 'stream', 'academic_year'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 70
+CODE: ).select_related('subject', 'grade_level', 'stream', 'academic_year')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 92
+CODE: current_grade_level=assignment.grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 101
+CODE: current_grade_level=assignment.grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 124
+CODE: current_grade_level=assignment.grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\access.py
+LINE: 160
+CODE: Keys may include ``subject``, ``grade_level``, ``stream``,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 38
+CODE: students_844 = scoped_students.filter(curriculum__code='844').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 39
+CODE: students_cbc = scoped_students.filter(curriculum__code='CBC').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 47
+CODE: teacher_assignments = teacher_profile.assignments.filter(status='APPROVED').select_related('subject', 'grade_level', 'stream', 'academic_year')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 53
+CODE: assignment_pairs = teacher_assignments.values_list('grade_level', 'stream').distinct()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 58
+CODE: q_objects |= Q(current_grade_level_id=grade_id, current_stream_id=stream_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 62
+CODE: students_844 = scoped_students.filter(curriculum__code='844').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 63
+CODE: students_cbc = scoped_students.filter(curriculum__code='CBC').count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\views.py
+LINE: 71
+CODE: exams_844 = Examination.objects.filter(curriculum__code='844').count()
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading.py
+LINE: 22
+CODE: kcse = AssessmentScheme.objects.filter(curriculum='844', is_active=True).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading.py
+LINE: 34
+CODE: cbc = AssessmentScheme.objects.filter(curriculum='CBC', is_active=True).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\add_school_report.py
+LINE: 26
+CODE: student_count = Student.objects.filter(current_grade_level=grade, is_active=True).count()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\add_school_report.py
+LINE: 31
+CODE: 'curriculum': grade.curriculum.name
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 21
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 70
+CODE: # 1. GET CURRICULUMS AND SUBJECTS
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 72
+CODE: print("\n📚 Getting Curriculums and Subjects...")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 74
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 75
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 77
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 78
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_test_data.py
+LINE: 89
+CODE: grade_levels_844 = {}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 36
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Stream, Subject, Term
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 73
+CODE: cbc = first_or_fail(Curriculum.objects.filter(code='CBC', is_active=True), 'active CBC curriculum')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 74
+CODE: grade = first_or_fail(GradeLevel.objects.filter(curriculum=cbc, is_active=True), 'active CBC grade level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 77
+CODE: subjects = list(Subject.objects.filter(curriculum=cbc, is_active=True).order_by('id')[:5])
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 81
+CODE: streams = list(Stream.objects.filter(grade_level=grade, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 86
+CODE: curriculum=cbc,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 87
+CODE: current_grade_level=grade,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_cbc_demo.py
+LINE: 101
+CODE: 'curriculum': cbc,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 14
+CODE: from grading.models import AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation, PerformanceLevel
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 15
+CODE: from school.models import Curriculum, AcademicYear
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 39
+CODE: curriculum_844 = Curriculum.objects.get(code="844")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 42
+CODE: curriculum="844",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 76
+CODE: calc, created = KCSEOverallCalculation.objects.get_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 78
+CODE: name="KCSE Standard Calculation",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 80
+CODE: "calculation_type": "STANDARD",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_grading_data.py
+LINE: 81
+CODE: "best_subject_count": 5,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 21
+CODE: from school.models import AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 27
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 74
+CODE: curriculum_844 = Curriculum.objects.get(code='844')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 75
+CODE: curriculum_cbc = Curriculum.objects.get(code='CBC')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 77
+CODE: subjects_844 = list(Subject.objects.filter(curriculum=curriculum_844, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 78
+CODE: subjects_cbc = list(Subject.objects.filter(curriculum=curriculum_cbc, is_active=True))
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 89
+CODE: grade_levels_844 = {}
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\gen_quick_data.py
+LINE: 92
+CODE: curriculum=curriculum_844,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 20
+CODE: 2. Pick the first LOCKED/PUBLISHED exam per curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 38
+CODE: from school.models import AcademicYear, Curriculum, GradeLevel, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 42
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 98
+CODE: kcse_scheme = AssessmentScheme.objects.filter(curriculum="844", is_active=True).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 105
+CODE: KCSEOverallCalculation.objects.filter(scheme=kcse_scheme).delete()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 116
+CODE: calc = KCSEOverallCalculation.objects.filter(scheme=kcse_scheme).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 118
+CODE: info(f"  → Overall calculation: {calc.name} (best {calc.best_subject_count} + core)")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_assessments.py
+LINE: 124
+CODE: cbc_scheme = AssessmentScheme.objects.filter(curriculum="CBC", is_active=True).first()
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 13
+CODE: from school.models import Curriculum, GradeLevel, Subject
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 15
+CODE: # Create Curriculums
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 16
+CODE: curriculums_data = [
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 17
+CODE: {'code': '844', 'name': '8-4-4', 'description': 'Traditional 8-4-4 curriculum for forms 1-4'},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 18
+CODE: {'code': 'CBC', 'name': 'CBC', 'description': 'Competency Based Curriculum for grades 1-12'},
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 21
+CODE: for data in curriculums_data:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 22
+CODE: curriculum, created = Curriculum.objects.get_or_create(
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\seed_school.py
+LINE: 27
+CODE: print(f"✅ Created curriculum: {curriculum.name}")
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 1
+CODE: """Import KICD curriculum content from CSV.
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 8
+CODE: curriculum, grade, learning_area_code, learning_area_name,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 20
+CODE: CurriculumVersion, GradeLevel, LearningArea,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 27
+CODE: 'curriculum', 'grade', 'learning_area_code', 'learning_area_name',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 33
+CODE: help = 'Import KICD curriculum content from a CSV file.'
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 40
+CODE: parser.add_argument('--curriculum-version', type=str, default=None)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 97
+CODE: version_code = options['curriculum_version']
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\import_kicd.py
+LINE: 103
+CODE: ver = CurriculumVersion.objects.filter(version_code=version_code).first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 24
+CODE: "assessment_schemes", "kcse_grade_rules", "kcse_overall_calculations",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 55
+CODE: curriculum VARCHAR(10) NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 87
+CODE: CREATE TABLE IF NOT EXISTS kcse_overall_calculations (
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 91
+CODE: calculation_type VARCHAR(20) NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 92
+CODE: best_subject_count INTEGER NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 99
+CODE: print("  ✅ Created kcse_overall_calculations")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 122
+CODE: weight DECIMAL NOT NULL,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\core\management\commands\fix_grading.py
+LINE: 136
+CODE: grade_level_id INTEGER,
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\generator.py
+LINE: 76
+CODE: ['Grade/Form:', student.current_grade_level.name if student.current_grade_level else '-'],
+PS>CommandInvocation(Out-Null): "Out-Null"
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 80
+CODE: 'grade': student.current_grade_level.name if student.current_grade_level else '-',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 90
+CODE: if StudentKCSEGrade and examination.curriculum.code == '844':
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 109
+CODE: elif StudentCBAAssessment and examination.curriculum.code == 'CBC':
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 123
+CODE: 'average_score': float(overall.total_weighted_score),
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 149
+CODE: grade_level_id = request.POST.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 152
+CODE: if not all([examination_id, grade_level_id, stream_id]):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 156
+CODE: if not can_use_class(request.user, grade_level_id, stream_id):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\reports\views.py
+LINE: 161
+CODE: grade_level = get_object_or_404(GradeLevel, id=grade_level_id)
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 3
+CODE: AssessmentScheme, KCSEGradeRule, KCSEOverallCalculation, PerformanceLevel,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 12
+CODE: list_display = ('name', 'curriculum', 'is_active', 'effective_from', 'effective_to')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 13
+CODE: list_filter = ('curriculum', 'is_active')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 14
+CODE: filter_horizontal = ('grade_levels',)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 21
+CODE: @admin.register(KCSEOverallCalculation)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 22
+CODE: class KCSEOverallCalculationAdmin(admin.ModelAdmin):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 23
+CODE: list_display = ('scheme', 'name', 'calculation_type', 'best_subject_count',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\admin.py
+LINE: 25
+CODE: filter_horizontal = ('core_subjects',)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 12
+CODE: def __init__(self, examination, grade_level=None, stream=None):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 14
+CODE: self.grade_level = grade_level
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 20
+CODE: curriculum = self.examination.curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 21
+CODE: grade_level = self.examination.grade_level
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 25
+CODE: curriculum=curriculum,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 26
+CODE: grade_level=grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 31
+CODE: # Fall back to curriculum-level grading system
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\engine.py
+LINE: 33
+CODE: curriculum=curriculum,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 4
+CODE: from school.models import Curriculum, GradeLevel, Subject, AcademicYear, Term
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 8
+CODE: # ============ CURRICULUM & ASSESSMENT SCHEMES ============
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 11
+CODE: """Assessment scheme for a curriculum"""
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 12
+CODE: CURRICULUM_CHOICES = [
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 18
+CODE: curriculum = models.CharField(max_length=10, choices=CURRICULUM_CHOICES)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 23
+CODE: grade_levels = models.ManyToManyField(GradeLevel, related_name='assessment_schemes', blank=True)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 35
+CODE: return f"{self.get_curriculum_display()} - {self.name}"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\models.py
+LINE: 39
+CODE: ordering = ['curriculum', 'name']
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 13
+CODE: def __init__(self, examination, grade_level=None, stream=None):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 15
+CODE: self.grade_level = grade_level
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 25
+CODE: curriculum='CBC',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 47
+CODE: if self.grade_level:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 50
+CODE: grade_level=self.grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 136
+CODE: 'weight': assessment.component.weight
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 148
+CODE: total_weight = 0
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\cbc_engine.py
+LINE: 153
+CODE: weighted_score = avg_score * (data['weight'] / 100)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 214
+CODE: def _create_kcse_rules(scheme, core_subjects):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 238
+CODE: from .models import AssessmentScheme, KCSEOverallCalculation
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 239
+CODE: from school.models import Curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 241
+CODE: kcse_curriculum = Curriculum.objects.filter(code="844").first()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 242
+CODE: if not kcse_curriculum:
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 243
+CODE: raise RuntimeError("Curriculum '844' not found. Run school setup first.")
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 247
+CODE: curriculum="844",
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\services.py
+LINE: 248
+CODE: description="Standard KCSE 8-4-4 grading scheme with A-E grades and weighted points.",
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 11
+CODE: from school.models import GradeLevel, Stream, Curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 16
+CODE: """Process marks using the appropriate engine based on curriculum"""
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 23
+CODE: grade_level_id = request.POST.get('grade_level')
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 26
+CODE: if not all([examination_id, grade_level_id, stream_id]):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 31
+CODE: grade_level = get_object_or_404(GradeLevel, id=grade_level_id)
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 38
+CODE: grade_level=grade_level,
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 46
+CODE: # Process based on curriculum
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\views.py
+LINE: 48
+CODE: if examination.curriculum.code == '844':
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 3
+CODE: from .models import KCSEGradeRule, KCSEOverallCalculation, StudentKCSEGrade, StudentOverallKCSE
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 9
+CODE: def __init__(self, examination, grade_level=None, stream=None):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 11
+CODE: self.grade_level = grade_level
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 15
+CODE: self.calculation = self._get_calculation()
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 21
+CODE: curriculum='844',
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 53
+CODE: def _get_calculation(self):
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 54
+CODE: """Get KCSE overall calculation methodology"""
+
+FILE: \\wsl$\Ubuntu\home\elisha\-EduGrade\grading\kcse_engine.py
+LINE: 58
+CODE: return KCSEOverallCalculation.objects.filter(
+PS>CommandInvocation(Out-Null): "Out-Null"
+
+====================================================
+SECOND STAGE INVESTIGATION COMPLETED
+====================================================
+**********************
+Windows PowerShell transcript end
+End time: 20261122201632
+**********************

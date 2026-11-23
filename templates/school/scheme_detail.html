@@ -1,0 +1,66 @@
+﻿{% extends "base.html" %}
+{% block title %}Scheme — {{ scheme.learning_area.name }}{% endblock %}
+{% block page_title %}Scheme of Work{% endblock %}
+{% block content %}
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1">{{ scheme.learning_area.name }} — {{ scheme.grade_level.name }}</h4>
+                <div class="text-muted">
+                    {{ scheme.term.name }} · {{ scheme.academic_year.year }}
+                    {% if scheme.teacher %} · {{ scheme.teacher.first_name }} {{ scheme.teacher.last_name }}{% endif %}
+                    · <span class="badge bg-secondary">{{ scheme.get_status_display }}</span>
+                </div>
+            </div>
+            <div class="text-end">
+                <div class="fs-4 fw-bold">{{ coverage_pct }}%</div>
+                <small class="text-muted">{{ covered_rows }} of {{ total_rows }} outcomes covered</small>
+            </div>
+        </div>
+        <div class="progress mt-3" style="height:10px;">
+            <div class="progress-bar bg-success" style="width:{{ coverage_pct }}%"></div>
+        </div>
+    </div>
+</div>
+
+{% for la_id, la_data in tree.items %}
+<div class="card mb-3">
+    <div class="card-header bg-light">
+        <strong>{{ la_data.la.name }}</strong>
+    </div>
+    <div class="card-body">
+        {% for st_id, st_data in la_data.strands.items %}
+            <h6 class="text-primary mt-2">{{ st_data.strand.name }}</h6>
+            {% for ss_id, ss_data in st_data.substrands.items %}
+                <div class="ms-3 mb-2">
+                    <div class="text-muted small">{{ ss_data.substrand.name }}</div>
+                    {% for row in ss_data.rows %}
+                    <div class="border rounded p-2 mb-2 bg-white">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <div class="small">{{ row.learning_outcome.outcome_text }}</div>
+                                <div class="text-muted" style="font-size:0.75rem;">
+                                    Week {{ row.week_number|default:"—" }} · {{ row.lesson_count }} lesson{{ row.lesson_count|pluralize }}
+                                </div>
+                            </div>
+                            <div class="ms-2">
+                                {% if row.coverage.is_complete %}
+                                    <span class="badge bg-success">Covered</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">Pending</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+<a href="{% url 'school:scheme_list' %}" class="btn btn-outline-secondary">Back to Schemes</a>
+{% endblock %}

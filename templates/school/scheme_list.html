@@ -1,0 +1,68 @@
+﻿{% extends "base.html" %}
+{% block title %}Schemes of Work{% endblock %}
+{% block page_title %}Schemes of Work{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h4 class="mb-1">Schemes of Work</h4>
+        <small class="text-muted">{{ schemes|length }} scheme{{ schemes|length|pluralize }}</small>
+    </div>
+    <div>
+        {% if has_teacher_profile %}
+        <a href="?{% if not mine_only %}mine=1{% endif %}" class="btn btn-outline-secondary btn-sm">
+            {% if mine_only %}Show All{% else %}Show Only Mine{% endif %}
+        </a>
+        {% endif %}
+        <a href="{% url 'school:coverage_dashboard' %}" class="btn btn-outline-primary btn-sm">Coverage Dashboard</a>
+    </div>
+</div>
+
+{% if schemes %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Learning Area</th>
+                    <th>Grade</th>
+                    <th>Term</th>
+                    <th>Year</th>
+                    <th>Teacher</th>
+                    <th>Status</th>
+                    <th>Coverage</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in schemes %}
+                <tr>
+                    <td>{{ s.learning_area.name }}</td>
+                    <td>{{ s.grade_level.name }}</td>
+                    <td>{{ s.term.name }}</td>
+                    <td>{{ s.academic_year.year }}</td>
+                    <td>{% if s.teacher %}{{ s.teacher.first_name }} {{ s.teacher.last_name }}{% else %}—{% endif %}</td>
+                    <td><span class="badge bg-secondary">{{ s.get_status_display }}</span></td>
+                    <td>
+                        <div class="progress" style="height:8px;min-width:80px;">
+                            {% widthratio s.covered_count s.row_count|default:1 100 as pct %}
+                            <div class="progress-bar bg-success" style="width:{{ pct }}%"></div>
+                        </div>
+                        <small>{{ s.covered_count }}/{{ s.row_count }}</small>
+                    </td>
+                    <td><a href="{% url 'school:scheme_detail' s.id %}" class="btn btn-sm btn-outline-primary">Open</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="fa-solid fa-list-check" style="font-size:3rem;color:#d1d5db;"></i>
+        <h5 class="mt-3">No schemes of work yet</h5>
+        <p>Create one in <a href="/admin/school/schemeofwork/add/">Django Admin</a>.</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

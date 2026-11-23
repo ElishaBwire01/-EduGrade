@@ -1,114 +1,197 @@
 ﻿from django.contrib import admin
-from django.contrib import messages
-from django.shortcuts import redirect
-from django.template.response import TemplateResponse
-from django.urls import reverse
 from .models import (
-    AcademicYear, Term, Curriculum, GradeLevel, 
-    Stream, Subject, SchoolInfo
+    AcademicYear, Term, Curriculum, GradeLevel, Stream, Subject, SchoolInfo,
 )
-from .services import reallocate_and_delete
 
 @admin.register(AcademicYear)
 class AcademicYearAdmin(admin.ModelAdmin):
-    list_display = ['year', 'name', 'is_current', 'start_date', 'end_date']
-    list_filter = ['is_current']
-    search_fields = ['year', 'name']
-    ordering = ['-year']
+    list_display = ('name', 'year', 'start_date', 'end_date', 'is_current')
+    list_filter = ('is_current',)
 
 @admin.register(Term)
 class TermAdmin(admin.ModelAdmin):
-    list_display = ['name', 'academic_year', 'term_number', 'is_active', 'start_date', 'end_date']
-    list_filter = ['academic_year', 'is_active']
-    search_fields = ['name']
-    ordering = ['academic_year', 'term_number']
+    list_display = ('name', 'term_number', 'academic_year', 'is_active')
+    list_filter = ('is_active', 'academic_year')
 
 @admin.register(Curriculum)
 class CurriculumAdmin(admin.ModelAdmin):
-    list_display = ['code', 'name', 'is_active']
-    list_filter = ['is_active']
-    search_fields = ['code', 'name']
+    list_display = ('code', 'name', 'is_active')
+    list_filter = ('is_active',)
 
 @admin.register(GradeLevel)
 class GradeLevelAdmin(admin.ModelAdmin):
-    list_display = ['name', 'curriculum', 'level_type', 'level_number', 'order', 'is_active']
-    list_filter = ['curriculum', 'level_type', 'is_active']
-    search_fields = ['name']
-
-    def delete_view(self, request, object_id, extra_context=None):
-        grade = self.get_object(request, object_id)
-        if not grade:
-            return super().delete_view(request, object_id, extra_context)
-        has_dependants = grade.students.exists() or grade.streams.filter(is_active=True).exists()
-        if not has_dependants:
-            return super().delete_view(request, object_id, extra_context)
-        if request.method == 'POST':
-            destination_grade = GradeLevel.objects.filter(
-                pk=request.POST.get('destination_grade'), is_active=True
-            ).exclude(pk=grade.pk).first()
-            destination_stream = Stream.objects.filter(
-                pk=request.POST.get('destination_stream'), is_active=True,
-                grade_level=destination_grade,
-            ).first() if destination_grade else None
-            if not destination_grade or not destination_stream:
-                messages.error(request, 'Select a valid destination grade and stream.')
-            else:
-                reallocate_and_delete(grade, destination_grade, destination_stream, request.user)
-                messages.success(request, f'{grade} deleted and its learners and teachers reallocated.')
-                return redirect(reverse('admin:school_gradelevel_changelist'))
-        context = {
-            **self.admin_site.each_context(request),
-            'opts': self.model._meta,
-            'object': grade,
-            'destination_grades': GradeLevel.objects.filter(is_active=True).exclude(pk=grade.pk),
-            'destination_streams': Stream.objects.filter(is_active=True).exclude(grade_level=grade),
-            'title': f'Reallocate dependants before deleting {grade}',
-        }
-        return TemplateResponse(request, 'admin/reallocate_grade_delete.html', context)
+    list_display = ('name', 'curriculum', 'level_type', 'level_number', 'order', 'is_active')
+    list_filter = ('curriculum', 'level_type', 'is_active')
 
 @admin.register(Stream)
 class StreamAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'grade_level', 'capacity', 'is_active']
-    list_filter = ['grade_level', 'is_active']
-    search_fields = ['name', 'code']
-
-    def delete_view(self, request, object_id, extra_context=None):
-        stream = self.get_object(request, object_id)
-        if not stream:
-            return super().delete_view(request, object_id, extra_context)
-        has_dependants = (
-            stream.students.exists()
-            or stream.classteacher_set.exists()
-            or stream.teacherassignment_set.exists()
-        )
-        if not has_dependants:
-            return super().delete_view(request, object_id, extra_context)
-        if request.method == 'POST':
-            destination_stream = Stream.objects.filter(
-                pk=request.POST.get('destination_stream'), is_active=True,
-            ).exclude(pk=stream.pk).select_related('grade_level').first()
-            if not destination_stream:
-                messages.error(request, 'Select a valid destination stream.')
-            else:
-                reallocate_and_delete(stream, destination_stream.grade_level, destination_stream, request.user)
-                messages.success(request, f'{stream} deleted and its learners and teachers reallocated.')
-                return redirect(reverse('admin:school_stream_changelist'))
-        context = {
-            **self.admin_site.each_context(request),
-            'opts': self.model._meta,
-            'object': stream,
-            'destination_streams': Stream.objects.filter(is_active=True).exclude(pk=stream.pk),
-            'title': f'Reallocate dependants before deleting {stream}',
-        }
-        return TemplateResponse(request, 'admin/reallocate_stream_delete.html', context)
+    list_display = ('name', 'code', 'grade_level', 'capacity', 'is_active')
+    list_filter = ('grade_level', 'is_active')
 
 @admin.register(Subject)
 class SubjectAdmin(admin.ModelAdmin):
-    list_display = ['code', 'name', 'short_name', 'curriculum', 'subject_type', 'is_active']
-    list_filter = ['curriculum', 'subject_type', 'is_active']
-    search_fields = ['code', 'name']
-    filter_horizontal = ['grade_levels']
+    list_display = ('code', 'name', 'short_name', 'curriculum', 'subject_type', 'is_active')
+    list_filter = ('curriculum', 'subject_type', 'is_active')
+    filter_horizontal = ('grade_levels',)
 
 @admin.register(SchoolInfo)
 class SchoolInfoAdmin(admin.ModelAdmin):
-    list_display = ['name', 'phone', 'email', 'current_academic_year']
+    list_display = ('name', 'phone', 'email', 'current_academic_year')
+
+# ---- Phase 2: curriculum content hierarchy ----
+from .models import (
+    LearningArea, Strand, SubStrand,
+    CoreCompetency, CoreValue, PCI,
+    LearningOutcome, LearningExperience, InquiryQuestion,
+)
+
+class StrandInline(admin.TabularInline):
+    model = Strand
+    extra = 0
+    fields = ('order', 'name', 'code', 'is_active')
+
+@admin.register(LearningArea)
+class LearningAreaAdmin(admin.ModelAdmin):
+    list_display = ('name', 'grade_level', 'curriculum_version', 'code', 'is_core', 'is_active')
+    list_filter = ('curriculum_version', 'grade_level', 'is_core', 'is_active')
+    search_fields = ('name', 'code')
+    inlines = [StrandInline]
+
+class SubStrandInline(admin.TabularInline):
+    model = SubStrand
+    extra = 0
+    fields = ('order', 'name', 'code', 'is_active')
+
+@admin.register(Strand)
+class StrandAdmin(admin.ModelAdmin):
+    list_display = ('name', 'learning_area', 'order', 'is_active')
+    list_filter = ('learning_area__grade_level', 'learning_area__curriculum_version', 'is_active')
+    search_fields = ('name',)
+    inlines = [SubStrandInline]
+
+class LearningOutcomeInline(admin.TabularInline):
+    model = LearningOutcome
+    extra = 0
+    fields = ('order', 'outcome_text', 'is_active')
+    show_change_link = True
+
+@admin.register(SubStrand)
+class SubStrandAdmin(admin.ModelAdmin):
+    list_display = ('name', 'strand', 'order', 'is_active')
+    list_filter = ('strand__learning_area__grade_level', 'is_active')
+    search_fields = ('name',)
+    inlines = [LearningOutcomeInline]
+
+class LearningExperienceInline(admin.TabularInline):
+    model = LearningExperience
+    extra = 0
+    fields = ('order', 'experience_text')
+
+class InquiryQuestionInline(admin.TabularInline):
+    model = InquiryQuestion
+    extra = 0
+    fields = ('order', 'question_text')
+
+@admin.register(LearningOutcome)
+class LearningOutcomeAdmin(admin.ModelAdmin):
+    list_display = ('short_text', 'sub_strand', 'order', 'is_active')
+    list_filter = ('sub_strand__strand__learning_area__grade_level', 'is_active')
+    search_fields = ('outcome_text',)
+    filter_horizontal = ('competencies', 'core_values', 'pcis')
+    inlines = [LearningExperienceInline, InquiryQuestionInline]
+
+    def short_text(self, obj):
+        return obj.outcome_text[:60]
+
+@admin.register(CoreCompetency)
+class CoreCompetencyAdmin(admin.ModelAdmin):
+    list_display = ('code', 'name', 'order', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('code', 'name')
+
+@admin.register(CoreValue)
+class CoreValueAdmin(admin.ModelAdmin):
+    list_display = ('code', 'name', 'order', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('code', 'name')
+
+@admin.register(PCI)
+class PCIAdmin(admin.ModelAdmin):
+    list_display = ('code', 'name', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('code', 'name')
+
+@admin.register(LearningExperience)
+class LearningExperienceAdmin(admin.ModelAdmin):
+    list_display = ('short_text', 'learning_outcome', 'order')
+    search_fields = ('experience_text',)
+
+    def short_text(self, obj):
+        return obj.experience_text[:60]
+
+@admin.register(InquiryQuestion)
+class InquiryQuestionAdmin(admin.ModelAdmin):
+    list_display = ('question_text', 'learning_outcome', 'order')
+    search_fields = ('question_text',)
+
+# ---- Phase 5: Teaching & Learning ----
+from .models import (
+    SchemeOfWork, SchemeOfWorkRow, LessonPlan, LessonActivity,
+    CurriculumCoverage, TeachingResource, TeacherReflection,
+)
+
+
+class SchemeOfWorkRowInline(admin.TabularInline):
+    model = SchemeOfWorkRow
+    extra = 0
+    fields = ('order', 'strand', 'sub_strand', 'learning_outcome', 'week_number', 'lesson_count')
+    autocomplete_fields = ()
+
+
+class LessonActivityInline(admin.TabularInline):
+    model = LessonActivity
+    extra = 0
+    fields = ('order', 'title', 'time_minutes', 'is_group')
+
+
+@admin.register(SchemeOfWork)
+class SchemeOfWorkAdmin(admin.ModelAdmin):
+    list_display = ('learning_area', 'grade_level', 'term', 'academic_year', 'teacher', 'status', 'coverage_percent')
+    list_filter = ('status', 'academic_year', 'term', 'grade_level')
+    search_fields = ('learning_area__name', 'grade_level__name', 'title')
+    inlines = [SchemeOfWorkRowInline]
+    autocomplete_fields = ()
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(LessonPlan)
+class LessonPlanAdmin(admin.ModelAdmin):
+    list_display = ('lesson_date', 'topic', 'scheme_row', 'teacher', 'status', 'duration_minutes')
+    list_filter = ('status', 'lesson_date')
+    search_fields = ('topic', 'sub_topic', 'scheme_row__learning_outcome__outcome_text')
+    date_hierarchy = 'lesson_date'
+    inlines = [LessonActivityInline]
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(CurriculumCoverage)
+class CurriculumCoverageAdmin(admin.ModelAdmin):
+    list_display = ('scheme_row', 'is_complete', 'covered_on', 'updated_at')
+    list_filter = ('is_complete', 'covered_on')
+    search_fields = ('scheme_row__learning_outcome__outcome_text',)
+
+
+@admin.register(TeachingResource)
+class TeachingResourceAdmin(admin.ModelAdmin):
+    list_display = ('title', 'resource_type', 'publisher', 'kicd_approved', 'is_active')
+    list_filter = ('resource_type', 'kicd_approved', 'is_active')
+    search_fields = ('title', 'publisher', 'edition')
+    filter_horizontal = ('learning_outcomes', 'grade_levels')
+
+
+@admin.register(TeacherReflection)
+class TeacherReflectionAdmin(admin.ModelAdmin):
+    list_display = ('lesson_plan', 'reflection_date')
+    list_filter = ('reflection_date',)
+    search_fields = ('lesson_plan__topic',)
+    date_hierarchy = 'reflection_date'

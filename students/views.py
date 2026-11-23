@@ -7,7 +7,8 @@ from django.db import transaction
 from django.core.paginator import Paginator
 from .models import Student, StudentHistory
 from school.models import AcademicYear, Curriculum, GradeLevel, Stream
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from datetime import datetime
 from core.access import can_manage_student, can_use_class, permitted_student_queryset, can_edit_student, is_admin
 from core.models import AuditLog
@@ -647,6 +648,7 @@ def student_transfer(request, student_id):
 @login_required
 def student_bulk_transfer(request):
     """Transfer multiple students to another class."""
+    source_students = Student.objects.none()  # BUG FIX: initialize before conditional assignment
     if not is_admin(request.user):
         messages.error(request, 'Only administrators can perform bulk student transfers.')
         return redirect('students:list')
@@ -760,3 +762,153 @@ def api_students_search(request):
         ).values('id', 'admission_number', 'first_name', 'last_name')[:10]
         return JsonResponse({'students': list(students)})
     return JsonResponse({'students': []})
+
+
+
+# ============================================================
+# PHASE 4: LEARNER PORTFOLIO
+# ============================================================
+@login_required
+def student_portfolio(request, student_id):
+    """Display a CBC learner portfolio: assessments grouped by
+    LearningArea -> Strand -> SubStrand -> LearningOutcome,
+    with evidence, observations, feedback and latest performance level.
+    Default: current academic year only. ?all=1 -> full history.
+    """
+    from grading.models import (
+        StudentCBAAssessment, TeacherObservation, LearnerFeedback,
+        AssessmentEvidence,
+    )
+    from school.models import LearningArea, Strand, SubStrand, LearningOutcome
+
+    student = get_object_or_404(
+        Student.objects.select_related(
+            'curriculum', 'current_grade_level', 'current_stream', 'academic_year'
+        ),
+        id=student_id,
+    )
+
+    show_all = request.GET.get('all') == '1'
+    current_year = student.academic_year
+
+    # ---- base queryset ----
+    cba_qs = StudentCBAAssessment.objects.filter(student=student).select_related(
+        'learning_outcome', 'rubric', 'subject', 'overall_level',
+        'learning_outcome__sub_strand__strand__learning_area',
+    )
+    if not show_all and current_year:
+        cba_qs = cba_qs.filter(examination__academic_year=current_year)
+
+    obs_qs = TeacherObservation.objects.filter(student=student).select_related(
+        'learning_outcome', 'recorded_by',
+    )
+    if not show_all and current_year:
+        # observations have no direct academic_year FK — use date filter
+        from django.utils import timezone
+        obs_qs = obs_qs.filter(observed_on__year=current_year.year)
+
+    fb_qs = LearnerFeedback.objects.filter(student=student).select_related(
+        'student_assessment', 'given_by',
+    )
+    if not show_all and current_year:
+        fb_qs = fb_qs.filter(given_on__year=current_year.year)
+
+    # ---- build hierarchy ----
+    # group by LearningArea -> Strand -> SubStrand -> LearningOutcome
+    tree = {}  # {la_id: {strand_id: {substrand_id: {lo_id: {...}}}}}
+
+    for cba in cba_qs:
+        lo = cba.learning_outcome
+        if not lo:
+            continue
+        ss = lo.sub_strand
+        st = ss.strand
+        la = st.learning_area
+
+        tree.setdefault(la.id, {'la': la, 'strands': {}})
+        tree[la.id]['strands'].setdefault(st.id, {'st': st, 'substrands': {}})
+        tree[la.id]['strands'][st.id]['substrands'].setdefault(ss.id, {'ss': ss, 'outcomes': {}})
+        tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'].setdefault(
+            lo.id, {'lo': lo, 'assessments': [], 'evidence': [], 'observations': [], 'feedback': []}
+        )
+        tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'][lo.id]['assessments'].append(cba)
+
+    # ---- attach evidence / observations / feedback ----
+    # Evidence: linked via StudentCBAAssessment
+    evidence_by_cba = {}
+    for ev in AssessmentEvidence.objects.filter(
+        student_assessment__in=cba_qs, is_active=True
+    ).select_related('learning_outcome'):
+        evidence_by_cba.setdefault(ev.student_assessment_id, []).append(ev)
+
+    for la in tree.values():
+        for st in la['strands'].values():
+            for ss in st['substrands'].values():
+                for entry in ss['outcomes'].values():
+                    for cba in entry['assessments']:
+                        entry['evidence'].extend(evidence_by_cba.get(cba.id, []))
+
+    # Observations: link to LO
+    for obs in obs_qs:
+        lo = obs.learning_outcome
+        if not lo:
+            continue
+        ss = lo.sub_strand; st = ss.strand; la = st.learning_area
+        # find in tree
+        try:
+            entry = tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'][lo.id]
+            entry['observations'].append(obs)
+        except KeyError:
+            # LO has observations but no CBA — still show it
+            tree.setdefault(la.id, {'la': la, 'strands': {}})
+            tree[la.id]['strands'].setdefault(st.id, {'st': st, 'substrands': {}})
+            tree[la.id]['strands'][st.id]['substrands'].setdefault(ss.id, {'ss': ss, 'outcomes': {}})
+            tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'].setdefault(
+                lo.id, {'lo': lo, 'assessments': [], 'evidence': [], 'observations': [], 'feedback': []}
+            )
+            tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'][lo.id]['observations'].append(obs)
+
+    # Feedback: linked to student and optionally to a CBA (via student_assessment.learning_outcome)
+    for fb in fb_qs:
+        cba = fb.student_assessment
+        if cba and cba.learning_outcome:
+            lo = cba.learning_outcome
+            ss = lo.sub_strand; st = ss.strand; la = st.learning_area
+            try:
+                tree[la.id]['strands'][st.id]['substrands'][ss.id]['outcomes'][lo.id]['feedback'].append(fb)
+            except KeyError:
+                pass
+
+    # ---- compute summary stats ----
+    all_assessments = list(cba_qs)
+    total_assessments = len(all_assessments)
+    total_evidence = AssessmentEvidence.objects.filter(
+        student_assessment__in=cba_qs, is_active=True
+    ).count()
+    total_observations = obs_qs.count()
+    total_feedback = fb_qs.count()
+
+    # Latest performance level per outcome
+    for la in tree.values():
+        for st in la['strands'].values():
+            for ss in st['substrands'].values():
+                for entry in ss['outcomes'].values():
+                    latest = None
+                    for cba in sorted(entry['assessments'], key=lambda x: x.updated_at, reverse=True):
+                        if cba.overall_level:
+                            latest = cba.overall_level
+                            break
+                    entry['latest_level'] = latest
+
+    context = {
+        'student': student,
+        'tree': tree,
+        'show_all': show_all,
+        'current_year': current_year,
+        'total_assessments': total_assessments,
+        'total_evidence': total_evidence,
+        'total_observations': total_observations,
+        'total_feedback': total_feedback,
+        'has_any_data': (total_assessments + total_evidence + total_observations + total_feedback) > 0,
+    }
+    return render(request, 'students/portfolio.html', context)

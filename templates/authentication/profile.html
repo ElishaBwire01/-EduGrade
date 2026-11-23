@@ -1,57 +1,109 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profile - EduGrade</title>
-    {% load static %}
-    <link rel="stylesheet" href="{% static 'css/style.css' %}">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container">
-            <a class="navbar-brand" href="{% url 'core:dashboard' %}">EduGrade</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="{% url 'core:dashboard' %}">Dashboard</a>
-                <a class="nav-link" href="{% url 'authentication:logout' %}">Logout</a>
-            </div>
-        </div>
-    </nav>
+﻿{% extends "base.html" %}
+{% block title %}My Profile — EduGrade{% endblock %}
+{% block page_title %}My Profile{% endblock %}
 
-    <div class="container mt-4">
-        <div class="row">
-            <div class="col-md-8 offset-md-2">
-                <div class="card shadow">
-                    <div class="card-header bg-primary text-white">
-                        <h4 class="mb-0">User Profile</h4>
-                    </div>
-                    <div class="card-body">
-                        <a href="{% url 'authentication:profile_edit' %}" class="btn btn-outline-primary mb-3"><i class="fas fa-edit"></i> Edit My Profile</a>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <p><strong>Username:</strong> {{ user.username }}</p>
-                                <p><strong>Full Name:</strong> {{ user.get_full_name }}</p>
-                                <p><strong>Email:</strong> {{ user.email }}</p>
-                            </div>
-                            <div class="col-md-6">
-                                <p><strong>Role:</strong> 
-                                    {% if user.profile.role %}
-                                        {{ user.profile.role.get_name_display }}
-                                    {% else %}
-                                        No role assigned
-                                    {% endif %}
-                                </p>
-                                <p><strong>Member since:</strong> {{ user.date_joined|date:"F d, Y" }}</p>
-                                <p><strong>Last login:</strong> {{ user.last_login|date:"F d, Y H:i" }}</p>
-                            </div>
-                        </div>
-                    </div>
+{% block content %}
+<div class="row g-4">
+
+    <!-- Left: identity card -->
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="mx-auto mb-3" style="width:96px;height:96px;border-radius:50%;
+                    background:linear-gradient(135deg,var(--eg-primary),var(--eg-primary-2));
+                    color:#fff;display:grid;place-items:center;font-size:2.25rem;font-weight:800">
+                    {{ user.username|slice:":1"|upper }}
                 </div>
+                <h5 class="fw-bold mb-1">{{ user.get_full_name|default:user.username }}</h5>
+                <p class="text-muted mb-3">{{ user.email|default:"No email set" }}</p>
+
+                {% if profile.role %}
+                <span class="badge badge-soft-info">{{ profile.role.name }}</span>
+                {% endif %}
+                {% if user.is_superuser %}
+                <span class="badge badge-soft-danger">Superuser</span>
+                {% elif user.is_staff %}
+                <span class="badge badge-soft-warning">Staff</span>
+                {% endif %}
+
+                <hr class="my-4">
+
+                <div class="text-start small">
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Username</span>
+                        <span class="fw-semibold">{{ user.username }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Joined</span>
+                        <span class="fw-semibold">{{ user.date_joined|date:"M d, Y" }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Last login</span>
+                        <span class="fw-semibold">{{ user.last_login|date:"M d, Y H:i"|default:"—" }}</span>
+                    </div>
+                    {% if profile.phone_number %}
+                    <div class="d-flex justify-content-between py-1">
+                        <span class="text-muted">Phone</span>
+                        <span class="fw-semibold">{{ profile.phone_number }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <a href="{% url 'authentication:profile_edit' %}" class="btn btn-primary w-100 mt-4">
+                    <i class="fa-regular fa-pen-to-square me-2"></i>Edit Profile
+                </a>
             </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+    <!-- Right: details + account actions -->
+    <div class="col-lg-8">
+        <div class="card mb-4">
+            <div class="card-header">Account Information</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="text-muted small">First name</div>
+                        <div class="fw-semibold">{{ user.first_name|default:"—" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="text-muted small">Last name</div>
+                        <div class="fw-semibold">{{ user.last_name|default:"—" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="text-muted small">Email</div>
+                        <div class="fw-semibold">{{ user.email|default:"—" }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="text-muted small">Phone</div>
+                        <div class="fw-semibold">{{ profile.phone_number|default:"—" }}</div>
+                    </div>
+                    <div class="col-12">
+                        <div class="text-muted small">Address</div>
+                        <div class="fw-semibold">{{ profile.address|default:"—" }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Quick Actions</div>
+            <div class="card-body d-flex flex-wrap gap-2">
+                <a href="{% url 'core:dashboard' %}" class="btn btn-outline-secondary">
+                    <i class="fa-solid fa-gauge-high me-2"></i>Dashboard
+                </a>
+                <a href="{% url 'core:notifications' %}" class="btn btn-outline-secondary">
+                    <i class="fa-regular fa-bell me-2"></i>Notifications
+                </a>
+                <form method="post" action="{% url 'authentication:logout' %}" class="m-0">
+                    {% csrf_token %}
+                    <button class="btn btn-outline-danger" type="submit">
+                        <i class="fa-solid fa-arrow-right-from-bracket me-2"></i>Log out
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Admin Mark Management - EduGrade{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-search-dollar"></i> Admin Mark Management</h2>
+        <a href="{% url 'marks:correction' %}" class="btn btn-warning">
+            <i class="fas fa-hourglass-half"></i> Pending Corrections
+        </a>
+    </div>
+
+    <!-- Search / Filter Form -->
+    <div class="card shadow mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="fas fa-filter"></i> Search Marks</h5>
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="exam_id" class="form-label">Examination</label>
+                    <select class="form-select" id="exam_id" name="exam_id">
+                        <option value="">All Examinations</option>
+                        {% for exam in exams %}
+                            <option value="{{ exam.id }}" {% if exam.id|stringformat:"s" == exam_id %}selected{% endif %}>
+                                {{ exam.name }} ({{ exam.academic_year.year }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="subject_id" class="form-label">Subject</label>
+                    <select class="form-select" id="subject_id" name="subject_id">
+                        <option value="">All Subjects</option>
+                        {% for subject in subjects %}
+                            <option value="{{ subject.id }}" {% if subject.id|stringformat:"s" == subject_id %}selected{% endif %}>
+                                {{ subject.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="grade_level_id" class="form-label">Grade</label>
+                    <select class="form-select" id="grade_level_id" name="grade_level_id">
+                        <option value="">All Grades</option>
+                        {% for grade in grade_levels %}
+                            <option value="{{ grade.id }}" {% if grade.id|stringformat:"s" == grade_level_id %}selected{% endif %}>
+                                {{ grade.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label for="stream_id" class="form-label">Stream</label>
+                    <select class="form-select" id="stream_id" name="stream_id">
+                        <option value="">All Streams</option>
+                        {% for stream in streams %}
+                            <option value="{{ stream.id }}" {% if stream.id|stringformat:"s" == stream_id %}selected{% endif %}>
+                                {{ stream.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="student_search" class="form-label">Student (name or admission #)</label>
+                    <input type="text" class="form-control" id="student_search" name="student_search"
+                           value="{{ student_search }}" placeholder="Search student...">
+                </div>
+                <div class="col-md-12 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-search"></i> Search
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="card shadow">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0">
+                <i class="fas fa-table"></i> Search Results ({{ marks.paginator.count }})
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Student</th>
+                            <th>Admission</th>
+                            <th>Exam</th>
+                            <th>Subject</th>
+                            <th>Class</th>
+                            <th>Score</th>
+                            <th>Status</th>
+                            <th>Entered By</th>
+                            <th>Last Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for mark in marks %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>
+                                <a href="{% url 'marks:admin_mark_edit' mark.id %}" class="text-decoration-none">
+                                    <i class="fas fa-edit"></i> {{ mark.student.full_name }}
+                                </a>
+                            </td>
+                            <td>{{ mark.student.admission_number }}</td>
+                            <td>{{ mark.examination.name }}</td>
+                            <td>{{ mark.subject.name }}</td>
+                            <td>{{ mark.grade_level.name }} {{ mark.stream.name }}</td>
+                            <td>
+                                <span class="badge bg-secondary fs-6">{{ mark.score }}</span>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if mark.status == 'APPROVED' %}success{% elif mark.status == 'SUBMITTED' %}info{% else %}secondary{% endif %}">
+                                    {{ mark.status }}
+                                </span>
+                            </td>
+                            <td>{{ mark.entered_by.get_full_name|default:mark.entered_by.username }}</td>
+                            <td>{{ mark.updated_at|date:"Y-m-d H:i" }}</td>
+                            <td>
+                                <a href="{% url 'marks:admin_mark_edit' mark.id %}" class="btn btn-sm btn-outline-primary" title="Edit Mark">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="12" class="text-center text-muted">No marks found. Use the search filters above.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if marks.has_other_pages %}
+            <div class="pagination justify-content-center mt-3">
+                <ul class="pagination">
+                    {% if marks.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ marks.previous_page_number }}">
+                                <i class="fas fa-chevron-left"></i>
+                            </a>
+                        </li>
+                    {% endif %}
+                    {% for i in marks.paginator.page_range %}
+                        {% if marks.number == i %}
+                            <li class="page-item active"><span class="page-link">{{ i }}</span></li>
+                        {% else %}
+                            <li class="page-item">
+                                <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ i }}">{{ i }}</a>
+                            </li>
+                        {% endif %}
+                    {% endfor %}
+                    {% if marks.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value }}&{% endif %}{% endfor %}page={{ marks.next_page_number }}">
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

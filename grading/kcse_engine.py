@@ -61,26 +61,43 @@ class KCSEEngine:
         ).first()
     
     def get_grade_and_points(self, score, subject_id=None):
-        """Get grade and points for a raw mark"""
+        """Get grade and points for a raw mark.
+
+        Robust against a missing AssessmentScheme:
+        - falls back to hardcoded KCSE_GRADES if no scheme exists
+        """
+        # Defensive: grade_rules may be {} when no active scheme exists
+        subject_rules = self.grade_rules.get('subject', {}) if isinstance(self.grade_rules, dict) else {}
+        all_rules = self.grade_rules.get('all', []) if isinstance(self.grade_rules, dict) else []
+
         rules = []
-        
-        # Try subject-specific rules first
-        if subject_id and subject_id in self.grade_rules['subject']:
-            rules = self.grade_rules['subject'][subject_id]
-        
-        # Fall back to general rules
+        if subject_id and subject_id in subject_rules:
+            rules = subject_rules[subject_id]
         if not rules:
-            rules = self.grade_rules['all']
-        
+            rules = all_rules
+
+        # Fallback: hardcoded KCSE grade boundaries from services.py
+        if not rules:
+            from .services import KCSE_GRADES
+            for grade, grade_name, points, min_s, max_s in KCSE_GRADES:
+                if min_s <= score <= max_s:
+                    return {
+                        'grade': grade,
+                        'grade_name': grade_name,
+                        'points': float(points),
+                        'descriptor': grade_name,
+                    }
+            return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
+
         for rule in rules:
             if rule.min_score <= score <= rule.max_score:
                 return {
                     'grade': rule.grade,
                     'grade_name': rule.grade_name,
                     'points': float(rule.points),
-                    'descriptor': rule.descriptor
+                    'descriptor': rule.descriptor,
                 }
-        
+
         return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
     
     def process_student(self, student):
@@ -281,3 +298,4 @@ class KCSEEngine:
             'grade_distribution': grade_distribution,
             'top_students': top_students
         }
+

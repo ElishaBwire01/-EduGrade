@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ pathway.name }}{% endblock %}
+{% block page_title %}{{ pathway.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="mb-3">
+        <a href="{% url 'senior_school:pathway_list' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-arrow-left me-1"></i>All Pathways
+        </a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h4 class="mb-1">{{ pathway.name }}</h4>
+            <span class="badge bg-primary">{{ pathway.code }}</span>
+            {% if pathway.description %}
+            <p class="text-muted mt-2 mb-0">{{ pathway.description }}</p>
+            {% endif %}
+            {% if pathway.career_hint %}
+            <div class="alert alert-light mt-3 mb-0">
+                <i class="fa-solid fa-briefcase me-2"></i>
+                <strong>Careers:</strong> {{ pathway.career_hint }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <h5 class="mb-3"><i class="fa-solid fa-layer-group me-2"></i>Tracks</h5>
+    <div class="row g-3 mb-4">
+        {% for track in pathway.tracks.all %}
+        {% if track.is_active %}
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between">
+                    <strong>{{ track.name }}</strong>
+                    <span class="badge bg-secondary">{{ track.code }}</span>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Code</th><th>Subject</th><th>Type</th></tr></thead>
+                        <tbody>
+                            {% for subject in track.subjects.all %}
+                            {% if subject.is_active %}
+                            <tr>
+                                <td><code>{{ subject.code }}</code></td>
+                                <td>{{ subject.name }}
+                                    {% if subject.is_compulsory %}
+                                    <span class="badge bg-warning text-dark ms-1">Compulsory</span>
+                                    {% endif %}
+                                </td>
+                                <td><small>{{ subject.get_subject_type_display }}</small></td>
+                            </tr>
+                            {% endif %}
+                            {% empty %}
+                            <tr><td colspan="3" class="text-muted text-center">No subjects yet</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% empty %}
+        <div class="col-12"><div class="alert alert-info">No tracks defined.</div></div>
+        {% endfor %}
+    </div>
+
+    <h5 class="mb-3"><i class="fa-solid fa-list-check me-2"></i>Approved Subject Combinations</h5>
+    <div class="row g-3">
+        {% for combo in pathway.combinations.all %}
+        {% if combo.is_active %}
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <strong>{{ combo.code }}</strong> — {{ combo.name }}
+                </div>
+                <div class="card-body">
+                    <ul class="list-unstyled mb-0">
+                        {% for cs in combo.combination_subjects.all %}
+                        <li>
+                            <i class="fa-solid fa-check-circle text-success me-2"></i>
+                            {{ cs.subject.name }}
+                            {% if cs.is_required %}<span class="badge bg-info ms-1">Required</span>{% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% empty %}
+        <div class="col-12"><div class="alert alert-info">No combinations defined.</div></div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

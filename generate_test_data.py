@@ -3,7 +3,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'edugrade.settings')
 import django
 django.setup()
 
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from datetime import date, timedelta
 import random
 from decimal import Decimal
@@ -691,3 +692,4 @@ print("\n🌐 Login at: http://127.0.0.1:8000/")
 print("👤 Username: admin or barakamrimi")
 print("🔑 Password: password123 (for teachers)")
 print("=" * 70)
+

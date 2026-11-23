@@ -1,0 +1,927 @@
+﻿
+
+==========================================================================================
+FILE: reports\views.py
+REQUESTED LINES: 1 to 145
+==========================================================================================
+    1: 
+    2: from django.shortcuts import render, redirect, get_object_or_404
+    3: from django.contrib.auth import get_user_model
+    4: from django.contrib.auth.decorators import login_required
+    5: from django.contrib.auth import get_user_model
+    6: from django.contrib import messages
+    7: from django.contrib.auth import get_user_model
+    8: from django.http import HttpResponse, FileResponse
+    9: from django.contrib.auth import get_user_model
+   10: from django.utils import timezone
+   11: from django.contrib.auth import get_user_model
+   12: from django.db.models import Avg, Max, Min, Count, Sum
+   13: from django.contrib.auth import get_user_model
+   14: from .models import ReportTemplate, GeneratedReport, ReportComment
+   15: from .generator import ReportGenerator
+   16: from students.models import Student
+   17: from examinations.models import Examination
+   18: from school.models import AcademicYear, Term, GradeLevel, Stream
+   19: from teachers.models import TeacherProfile
+   20: from marks.models import MarkEntry
+   21: from core.access import is_admin, permitted_student_queryset, can_use_class, class_teacher_assignments
+   22: 
+   23: User = get_user_model()
+   24: 
+   25: # Import grading models with error handling
+   26: try:
+   27:     from grading.models import StudentKCSEGrade, StudentOverallKCSE, StudentCBAAssessment, StudentOverallCBA
+   28: except ImportError:
+   29:     StudentKCSEGrade = None
+   30:     StudentOverallKCSE = None
+   31:     StudentCBAAssessment = None
+   32:     StudentOverallCBA = None
+   33: 
+   34: @login_required
+   35: def report_dashboard(request):
+   36:     context = {
+   37:         'student_reports': GeneratedReport.objects.filter(report_type='STUDENT'),
+   38:         'class_reports': GeneratedReport.objects.filter(report_type='CLASS'),
+   39:         'school_reports': GeneratedReport.objects.filter(report_type='SCHOOL'),
+   40:         'total_reports': GeneratedReport.objects.count(),
+   41:         'published_reports': GeneratedReport.objects.filter(status='PUBLISHED').count(),
+   42:     }
+   43:     return render(request, 'reports/dashboard.html', context)
+   44: 
+   45: @login_required
+   46: def report_list(request):
+   47:     reports = GeneratedReport.objects.select_related('student', 'examination', 'academic_year', 'term', 'generated_by').all()
+   48:     
+   49:     status_filter = request.GET.get('status')
+   50:     if status_filter:
+   51:         reports = reports.filter(status=status_filter)
+   52:     
+   53:     report_type_filter = request.GET.get('report_type')
+   54:     if report_type_filter:
+   55:         reports = reports.filter(report_type=report_type_filter)
+   56:     
+   57:     context = {
+   58:         'reports': reports,
+   59:         'status_choices': GeneratedReport.STATUS_CHOICES,
+   60:         'report_type_choices': GeneratedReport.REPORT_TYPES,
+   61:     }
+   62:     return render(request, 'reports/list.html', context)
+   63: 
+   64: @login_required
+   65: def generate_student_report(request, student_id):
+   66:     student = get_object_or_404(permitted_student_queryset(request.user), id=student_id)
+   67:     examination_id = request.GET.get('exam_id')
+   68:     
+   69:     if not examination_id:
+   70:         messages.error(request, 'Please select an examination!')
+   71:         return redirect('students:detail', student_id=student.id)
+   72:     
+   73:     examination = get_object_or_404(Examination, id=examination_id)
+   74:     
+   75:     report_data = {
+   76:         'title': f"Student Report - {student.full_name}",
+   77:         'student': {
+   78:             'name': student.full_name,
+   79:             'admission': student.admission_number,
+   80:             'grade': student.current_grade_level.name if student.current_grade_level else '-',
+   81:             'stream': student.current_stream.name if student.current_stream else '-',
+   82:         },
+   83:         'examination': examination.name,
+   84:         'subject_performances': [],
+   85:         'overall': {},
+   86:         'strengths': [],
+   87:         'weaknesses': [],
+   88:     }
+   89:     
+   90:     if StudentKCSEGrade and examination.curriculum.code == '844':
+   91:         kcse_grades = StudentKCSEGrade.objects.filter(student=student, examination=examination).select_related('subject')
+   92:         for grade in kcse_grades:
+   93:             report_data['subject_performances'].append({
+   94:                 'subject_name': grade.subject.name,
+   95:                 'score': float(grade.raw_mark),
+   96:                 'grade': grade.grade,
+   97:                 'points': float(grade.points),
+   98:             })
+   99:         if StudentOverallKCSE:
+  100:             overall = StudentOverallKCSE.objects.filter(student=student, examination=examination).first()
+  101:             if overall:
+  102:                 report_data['overall'] = {
+  103:                     'total_score': float(overall.total_points),
+  104:                     'average_score': float(overall.mean_score),
+  105:                     'grade': overall.mean_grade,
+  106:                     'position': overall.position,
+  107:                 }
+  108:     
+  109:     elif StudentCBAAssessment and examination.curriculum.code == 'CBC':
+  110:         cbc_assessments = StudentCBAAssessment.objects.filter(student=student, examination=examination).select_related('subject')
+  111:         for assessment in cbc_assessments:
+  112:             report_data['subject_performances'].append({
+  113:                 'subject_name': assessment.subject.name,
+  114:                 'score': float(assessment.score) if assessment.score else 0,
+  115:                 'grade': assessment.overall_level.level_code if assessment.overall_level else '-',
+  116:                 'points': assessment.overall_level.numeric_value if assessment.overall_level else '-',
+  117:             })
+  118:         if StudentOverallCBA:
+  119:             overall = StudentOverallCBA.objects.filter(student=student, examination=examination).first()
+  120:             if overall:
+  121:                 report_data['overall'] = {
+  122:                     'total_score': float(overall.total_score),
+  123:                     'average_score': float(overall.total_weighted_score),
+  124:                     'grade': overall.overall_level.level_code if overall.overall_level else '-',
+  125:                     'position': overall.position,
+  126:                 }
+  127:     
+  128:     if not report_data['subject_performances']:
+  129:         messages.error(request, 'No performance data found for this student!')
+  130:         return redirect('students:detail', student_id=student.id)
+  131:     
+  132:     generator = ReportGenerator('STUDENT', report_data)
+  133:     
+  134:     if request.GET.get('format') == 'word':
+  135:         word_buffer = generator.generate_word_report(report_data, 'student')
+  136:         response = HttpResponse(word_buffer.getvalue(), content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+  137:         response['Content-Disposition'] = f'attachment; filename=student_report_{student.admission_number}_{examination.code}.docx'
+  138:         return response
+  139:     else:
+  140:         pdf_buffer = generator.generate_student_report_pdf(student, report_data, examination)
+  141:         response = HttpResponse(pdf_buffer.getvalue(), content_type='application/pdf')
+  142:         response['Content-Disposition'] = f'attachment; filename=student_report_{student.admission_number}_{examination.code}.pdf'
+  143:         return response
+  144: 
+  145: @login_required
+
+
+==========================================================================================
+FILE: reports\generator.py
+REQUESTED LINES: 1 to 230
+==========================================================================================
+    1: import io
+    2: import os
+    3: from datetime import datetime
+    4: from django.conf import settings
+    5: from django.template.loader import render_to_string
+    6: from django.http import HttpResponse
+    7: from reportlab.lib import colors
+    8: from reportlab.lib.pagesizes import letter, A4
+    9: from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+   10: from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+   11: from reportlab.lib.units import inch, cm
+   12: from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+   13: from reportlab.graphics.shapes import Drawing
+   14: from reportlab.graphics.charts.barcharts import VerticalBarChart
+   15: from reportlab.graphics.charts.piecharts import Pie
+   16: from docx import Document
+   17: from docx.shared import Inches, Pt, RGBColor
+   18: from docx.enum.text import WD_ALIGN_PARAGRAPH
+   19: from docx.enum.table import WD_TABLE_ALIGNMENT
+   20: import xhtml2pdf.pisa as pisa
+   21: from io import BytesIO
+   22: 
+   23: class ReportGenerator:
+   24:     """Generate various reports"""
+   25:     
+   26:     def __init__(self, report_type, data, template=None):
+   27:         self.report_type = report_type
+   28:         self.data = data
+   29:         self.template = template
+   30:         self.styles = getSampleStyleSheet()
+   31:         self._setup_styles()
+   32:     
+   33:     def _setup_styles(self):
+   34:         """Setup custom styles"""
+   35:         self.styles.add(ParagraphStyle(
+   36:             name='CustomTitle',
+   37:             parent=self.styles['Heading1'],
+   38:             fontSize=24,
+   39:             alignment=TA_CENTER,
+   40:             spaceAfter=20,
+   41:             textColor=colors.HexColor('#1a5276')
+   42:         ))
+   43:         self.styles.add(ParagraphStyle(
+   44:             name='CustomHeading',
+   45:             parent=self.styles['Heading2'],
+   46:             fontSize=16,
+   47:             textColor=colors.HexColor('#2e86c1'),
+   48:             spaceAfter=10
+   49:         ))
+   50:         self.styles.add(ParagraphStyle(
+   51:             name='CustomBody',
+   52:             parent=self.styles['Normal'],
+   53:             fontSize=11,
+   54:             spaceAfter=6
+   55:         ))
+   56:     
+   57:     def generate_student_report_pdf(self, student, analysis, examination):
+   58:         """Generate student report as PDF"""
+   59:         buffer = io.BytesIO()
+   60:         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+   61:         story = []
+   62:         
+   63:         # Title
+   64:         story.append(Paragraph("STUDENT PERFORMANCE REPORT", self.styles['CustomTitle']))
+   65:         story.append(Spacer(1, 0.2*inch))
+   66:         
+   67:         # School Info
+   68:         story.append(Paragraph("EduGrade Analytics System", self.styles['CustomHeading']))
+   69:         story.append(Paragraph("School Performance Report", self.styles['CustomBody']))
+   70:         story.append(Spacer(1, 0.1*inch))
+   71:         
+   72:         # Student Information Table
+   73:         student_data = [
+   74:             ['Admission No:', student.admission_number],
+   75:             ['Name:', student.full_name],
+   76:             ['Grade/Form:', student.current_grade_level.name if student.current_grade_level else '-'],
+   77:             ['Stream:', student.current_stream.name if student.current_stream else '-'],
+   78:             ['Examination:', examination.name if examination else '-'],
+   79:             ['Date:', datetime.now().strftime('%Y-%m-%d')],
+   80:         ]
+   81:         student_table = Table(student_data, colWidths=[2*inch, 4*inch])
+   82:         student_table.setStyle(TableStyle([
+   83:             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+   84:             ('FONTSIZE', (0, 0), (-1, -1), 10),
+   85:             ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+   86:             ('TEXTCOLOR', (0, 0), (0, -1), colors.black),
+   87:             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+   88:             ('PADDING', (0, 0), (-1, -1), 5),
+   89:         ]))
+   90:         story.append(student_table)
+   91:         story.append(Spacer(1, 0.2*inch))
+   92:         
+   93:         # Subject Performance
+   94:         if 'subject_performances' in self.data:
+   95:             story.append(Paragraph("Subject Performance", self.styles['CustomHeading']))
+   96:             subject_data = [['Subject', 'Score', 'Grade', 'Points']]
+   97:             for perf in self.data['subject_performances']:
+   98:                 subject_data.append([
+   99:                     perf['subject_name'],
+  100:                     f"{perf['score']:.1f}%",
+  101:                     perf['grade'],
+  102:                     str(perf.get('points', '-'))
+  103:                 ])
+  104:             
+  105:             subject_table = Table(subject_data, colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+  106:             subject_table.setStyle(TableStyle([
+  107:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  108:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  109:                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e86c1')),
+  110:                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+  111:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  112:                 ('PADDING', (0, 0), (-1, -1), 5),
+  113:             ]))
+  114:             story.append(subject_table)
+  115:             story.append(Spacer(1, 0.2*inch))
+  116:         
+  117:         # Overall Performance
+  118:         if 'overall' in self.data:
+  119:             overall = self.data['overall']
+  120:             story.append(Paragraph("Overall Performance", self.styles['CustomHeading']))
+  121:             overall_data = [
+  122:                 ['Total Score', f"{overall.get('total_score', 0):.1f}"],
+  123:                 ['Average', f"{overall.get('average_score', 0):.1f}%"],
+  124:                 ['Grade', overall.get('grade', '-')],
+  125:                 ['Position', str(overall.get('position', '-'))],
+  126:             ]
+  127:             overall_table = Table(overall_data, colWidths=[2*inch, 4*inch])
+  128:             overall_table.setStyle(TableStyle([
+  129:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  130:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  131:                 ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+  132:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  133:                 ('PADDING', (0, 0), (-1, -1), 5),
+  134:             ]))
+  135:             story.append(overall_table)
+  136:             story.append(Spacer(1, 0.2*inch))
+  137:         
+  138:         # Strengths and Weaknesses
+  139:         if 'strengths' in self.data and self.data['strengths']:
+  140:             story.append(Paragraph("Strengths", self.styles['CustomHeading']))
+  141:             for strength in self.data['strengths']:
+  142:                 story.append(Paragraph(f"• {strength}", self.styles['CustomBody']))
+  143:             story.append(Spacer(1, 0.1*inch))
+  144:         
+  145:         if 'weaknesses' in self.data and self.data['weaknesses']:
+  146:             story.append(Paragraph("Areas for Improvement", self.styles['CustomHeading']))
+  147:             for weakness in self.data['weaknesses']:
+  148:                 story.append(Paragraph(f"• {weakness}", self.styles['CustomBody']))
+  149:             story.append(Spacer(1, 0.1*inch))
+  150:         
+  151:         # Footer
+  152:         story.append(Spacer(1, 0.5*inch))
+  153:         story.append(Paragraph("Generated by EduGrade Analytics System", self.styles['Normal']))
+  154:         story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", self.styles['Normal']))
+  155:         
+  156:         doc.build(story)
+  157:         buffer.seek(0)
+  158:         return buffer
+  159:     
+  160:     def generate_class_report_pdf(self, class_data):
+  161:         """Generate class report as PDF"""
+  162:         buffer = io.BytesIO()
+  163:         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+  164:         story = []
+  165:         
+  166:         # Title
+  167:         story.append(Paragraph("CLASS PERFORMANCE REPORT", self.styles['CustomTitle']))
+  168:         story.append(Spacer(1, 0.2*inch))
+  169:         
+  170:         # Class Info
+  171:         story.append(Paragraph(f"Class: {class_data.get('class_name', 'N/A')}", self.styles['CustomHeading']))
+  172:         story.append(Paragraph(f"Exam: {class_data.get('exam_name', 'N/A')}", self.styles['CustomBody']))
+  173:         story.append(Spacer(1, 0.1*inch))
+  174:         
+  175:         # Statistics
+  176:         stats = class_data.get('statistics', {})
+  177:         stats_data = [
+  178:             ['Total Students', str(stats.get('total_students', 0))],
+  179:             ['Average Score', f"{stats.get('average_score', 0):.1f}%"],
+  180:             ['Highest Score', f"{stats.get('highest_score', 0):.1f}%"],
+  181:             ['Lowest Score', f"{stats.get('lowest_score', 0):.1f}%"],
+  182:             ['Pass Rate', f"{stats.get('pass_rate', 0):.1f}%"],
+  183:         ]
+  184:         stats_table = Table(stats_data, colWidths=[3*inch, 3*inch])
+  185:         stats_table.setStyle(TableStyle([
+  186:             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  187:             ('FONTSIZE', (0, 0), (-1, -1), 10),
+  188:             ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+  189:             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  190:             ('PADDING', (0, 0), (-1, -1), 5),
+  191:         ]))
+  192:         story.append(stats_table)
+  193:         story.append(Spacer(1, 0.2*inch))
+  194:         
+  195:         # Top Students
+  196:         top_students = class_data.get('top_students', [])
+  197:         if top_students:
+  198:             story.append(Paragraph("Top Students", self.styles['CustomHeading']))
+  199:             top_data = [['Rank', 'Student', 'Score']]
+  200:             for i, student in enumerate(top_students[:10], 1):
+  201:                 top_data.append([
+  202:                     str(i),
+  203:                     student.get('name', 'N/A'),
+  204:                     f"{student.get('score', 0):.1f}%"
+  205:                 ])
+  206:             
+  207:             top_table = Table(top_data, colWidths=[1*inch, 3.5*inch, 2*inch])
+  208:             top_table.setStyle(TableStyle([
+  209:                 ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+  210:                 ('FONTSIZE', (0, 0), (-1, -1), 10),
+  211:                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2e86c1')),
+  212:                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+  213:                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+  214:                 ('PADDING', (0, 0), (-1, -1), 5),
+  215:             ]))
+  216:             story.append(top_table)
+  217:         
+  218:         # Footer
+  219:         story.append(Spacer(1, 0.5*inch))
+  220:         story.append(Paragraph("Generated by EduGrade Analytics System", self.styles['Normal']))
+  221:         story.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", self.styles['Normal']))
+  222:         
+  223:         doc.build(story)
+  224:         buffer.seek(0)
+  225:         return buffer
+  226:     
+  227:     def generate_word_report(self, report_data, report_type='student'):
+  228:         """Generate Word document report"""
+  229:         doc = Document()
+  230:         
+
+
+==========================================================================================
+FILE: grading\views.py
+REQUESTED LINES: 1 to 110
+==========================================================================================
+    1: from django.shortcuts import render, redirect, get_object_or_404
+    2: from django.contrib.auth.decorators import login_required
+    3: from django.contrib import messages
+    4: from django.http import JsonResponse
+    5: from django.db.models import Avg, Max, Min, Count, Q
+    6: from django.core.paginator import Paginator
+    7: from .models import AssessmentScheme, KCSEGradeRule, PerformanceLevel, StudentKCSEGrade, StudentCBAAssessment
+    8: from .kcse_engine import KCSEEngine
+    9: from .cbc_engine import CBCEngine
+   10: from examinations.models import Examination
+   11: from school.models import GradeLevel, Stream, Curriculum
+   12: from students.models import Student
+   13: 
+   14: @login_required
+   15: def process_marks(request):
+   16:     """Process marks using the appropriate engine based on curriculum"""
+   17:     if not (request.user.is_staff or request.user.is_superuser):
+   18:         messages.error(request, 'Only administrators can process marks!')
+   19:         return redirect('core:dashboard')
+   20:     
+   21:     if request.method == 'POST':
+   22:         examination_id = request.POST.get('examination')
+   23:         grade_level_id = request.POST.get('grade_level')
+   24:         stream_id = request.POST.get('stream')
+   25:         
+   26:         if not all([examination_id, grade_level_id, stream_id]):
+   27:             messages.error(request, 'Please select examination, grade, and stream.')
+   28:             return redirect('grading:process')
+   29:         
+   30:         examination = get_object_or_404(Examination, id=examination_id)
+   31:         grade_level = get_object_or_404(GradeLevel, id=grade_level_id)
+   32:         stream = get_object_or_404(Stream, id=stream_id)
+   33:         
+   34:         # Check if marks exist
+   35:         from marks.models import MarkEntry
+   36:         has_marks = MarkEntry.objects.filter(
+   37:             examination=examination,
+   38:             grade_level=grade_level,
+   39:             stream=stream
+   40:         ).exists()
+   41:         
+   42:         if not has_marks:
+   43:             messages.error(request, 'No marks found for this examination!')
+   44:             return redirect('grading:process')
+   45:         
+   46:         # Process based on curriculum
+   47:         try:
+   48:             if examination.curriculum.code == '844':
+   49:                 # Pre-check: does an active KCSE scheme exist?
+   50:                 from grading.services import get_scheme_for_curriculum
+   51:                 if not get_scheme_for_curriculum('844'):
+   52:                     messages.error(
+   53:                         request,
+   54:                         'No active KCSE AssessmentScheme found. '
+   55:                         'Run: python manage.py seed_grading'
+   56:                     )
+   57:                     return redirect('grading:process')
+   58: 
+   59:                 engine = KCSEEngine(examination, grade_level, stream)
+   60:                 results = engine.process_class()
+   61:                 messages.success(request, f'KCSE marks processed for {len(results)} students!')
+   62: 
+   63:             elif examination.curriculum.code == 'CBC':
+   64:                 from grading.services import get_scheme_for_curriculum
+   65:                 if not get_scheme_for_curriculum('CBC'):
+   66:                     messages.error(
+   67:                         request,
+   68:                         'No active CBC AssessmentScheme found. '
+   69:                         'Run: python manage.py seed_grading'
+   70:                     )
+   71:                     return redirect('grading:process')
+   72: 
+   73:                 engine = CBCEngine(examination, grade_level, stream)
+   74:                 results = engine.process_class()
+   75:                 messages.success(request, f'CBC assessments processed for {len(results)} students!')
+   76:             else:
+   77:                 messages.error(request, 'Unknown curriculum!')
+   78:                 return redirect('grading:process')
+   79:             
+   80:             # Store exam ID for report generation
+   81:             request.session['exam_id'] = examination.id
+   82:             return redirect('grading:class_report')
+   83:             
+   84:         except Exception as e:
+   85:             messages.error(request, f'Error processing marks: {str(e)}')
+   86:             return redirect('grading:process')
+   87:     
+   88:     # GET request - show form
+   89:     context = {
+   90:         'examinations': Examination.objects.filter(status__in=['DRAFT', 'ACTIVE', 'LOCKED', 'PUBLISHED']).order_by('-created_at'),
+   91:         'grade_levels': GradeLevel.objects.filter(is_active=True),
+   92:         'streams': Stream.objects.filter(is_active=True),
+   93:     }
+   94:     return render(request, 'grading/process.html', context)
+   95: 
+   96: 
+   97: @login_required
+   98: def class_report(request):
+   99:     """View class performance report with curriculum-specific display"""
+  100:     if not (request.user.is_staff or request.user.is_superuser):
+  101:         messages.error(request, 'Only administrators can view class reports!')
+  102:         return redirect('core:dashboard')
+  103:     
+  104:     exam_id = request.GET.get('exam_id') or request.session.get('exam_id')
+  105:     
+  106:     if not exam_id:
+  107:         messages.warning(request, 'Please process marks first!')
+  108:         return redirect('grading:process')
+  109:     
+  110:     examination = get_object_or_404(Examination, id=exam_id)
+
+
+==========================================================================================
+FILE: grading\engine.py
+REQUESTED LINES: 1 to 180
+==========================================================================================
+    1: from django.db import models
+    2: from django.db.models import Avg, Sum, Count, Q
+    3: from decimal import Decimal
+    4: from .models import GradingSystem, GradeRule, PerformanceAnalysis, SubjectPerformance
+    5: from marks.models import MarkEntry
+    6: from students.models import Student
+    7: from datetime import datetime
+    8: 
+    9: class GradingEngine:
+   10:     """Core grading engine for processing marks"""
+   11:     
+   12:     def __init__(self, examination, grade_level=None, stream=None):
+   13:         self.examination = examination
+   14:         self.grade_level = grade_level
+   15:         self.stream = stream
+   16:         self.grading_system = self._get_grading_system()
+   17:         
+   18:     def _get_grading_system(self):
+   19:         """Get the appropriate grading system"""
+   20:         curriculum = self.examination.curriculum
+   21:         grade_level = self.examination.grade_level
+   22:         
+   23:         # Try to find a specific grading system for this grade
+   24:         grading_system = GradingSystem.objects.filter(
+   25:             curriculum=curriculum,
+   26:             grade_level=grade_level,
+   27:             is_active=True
+   28:         ).first()
+   29:         
+   30:         if not grading_system:
+   31:             # Fall back to curriculum-level grading system
+   32:             grading_system = GradingSystem.objects.filter(
+   33:                 curriculum=curriculum,
+   34:                 grade_level__isnull=True,
+   35:                 is_active=True
+   36:             ).first()
+   37:         
+   38:         return grading_system
+   39:     
+   40:     def _get_grade_rule(self, score, subject=None):
+   41:         """Determine grade based on score"""
+   42:         if not self.grading_system:
+   43:             return None, None, 0
+   44:         
+   45:         rules = GradeRule.objects.filter(
+   46:             grading_system=self.grading_system,
+   47:             is_active=True
+   48:         )
+   49:         
+   50:         if subject:
+   51:             rules = rules.filter(
+   52:                 models.Q(subject_type='ALL') | 
+   53:                 models.Q(subject_type='SPECIFIC', subject=subject)
+   54:             )
+   55:         else:
+   56:             rules = rules.filter(subject_type='ALL')
+   57:         
+   58:         for rule in rules.order_by('order'):
+   59:             if rule.min_score <= score <= rule.max_score:
+   60:                 return rule.grade, rule.grade_name, rule.points
+   61:         
+   62:         return None, None, 0
+   63:     
+   64:     def _get_subject_marks(self, student):
+   65:         """Get all marks for a student in this examination"""
+   66:         marks = MarkEntry.objects.filter(
+   67:             student=student,
+   68:             examination=self.examination,
+   69:             is_active=True
+   70:         ).select_related('subject')
+   71:         
+   72:         return {mark.subject_id: mark for mark in marks}
+   73:     
+   74:     def process_student(self, student):
+   75:         """Process a single student's marks"""
+   76:         marks = self._get_subject_marks(student)
+   77:         
+   78:         if not marks:
+   79:             return None
+   80:         
+   81:         # Calculate subject performances
+   82:         subject_performances = []
+   83:         total_score = 0
+   84:         total_possible = 0
+   85:         max_possible = len(marks) * 100
+   86:         
+   87:         for subject_id, mark in marks.items():
+   88:             score = mark.score or 0
+   89:             grade, grade_name, points = self._get_grade_rule(float(score), mark.subject)
+   90:             
+   91:             subject_performances.append({
+   92:                 'subject': mark.subject,
+   93:                 'score': score,
+   94:                 'grade': grade,
+   95:                 'grade_name': grade_name,
+   96:                 'points': points
+   97:             })
+   98:             
+   99:             total_score += float(score)
+  100:             total_possible += 100
+  101:         
+  102:         # Calculate overall performance
+  103:         total_possible = total_possible or 1
+  104:         average_score = (total_score / total_possible) * 100 if total_possible > 0 else 0
+  105:         overall_grade, overall_grade_name, overall_points = self._get_grade_rule(average_score)
+  106:         
+  107:         return {
+  108:             'student': student,
+  109:             'marks': marks,
+  110:             'subject_performances': subject_performances,
+  111:             'total_score': total_score,
+  112:             'average_score': average_score,
+  113:             'overall_grade': overall_grade,
+  114:             'overall_points': overall_points,
+  115:             'grade_name': overall_grade_name
+  116:         }
+  117:     
+  118:     def process_examination(self):
+  119:         """Process all students for this examination"""
+  120:         # Get all students for this class
+  121:         if self.grade_level and self.stream:
+  122:             students = Student.objects.filter(
+  123:                 current_grade_level=self.grade_level,
+  124:                 current_stream=self.stream,
+  125:                 is_active=True
+  126:             )
+  127:         else:
+  128:             # Get all students in the grade level
+  129:             students = Student.objects.filter(
+  130:                 current_grade_level=self.examination.grade_level,
+  131:                 is_active=True
+  132:             )
+  133:         
+  134:         results = []
+  135:         for student in students:
+  136:             result = self.process_student(student)
+  137:             if result:
+  138:                 results.append(result)
+  139:         
+  140:         # Save results to database
+  141:         self._save_results(results)
+  142:         
+  143:         # Calculate rankings
+  144:         self._calculate_rankings(results)
+  145:         
+  146:         # Identify strengths and weaknesses
+  147:         self._analyze_performance(results)
+  148:         
+  149:         return results
+  150:     
+  151:     def _save_results(self, results):
+  152:         """Save performance analysis to database"""
+  153:         for result in results:
+  154:             # Create or update PerformanceAnalysis
+  155:             analysis, created = PerformanceAnalysis.objects.update_or_create(
+  156:                 student=result['student'],
+  157:                 examination=self.examination,
+  158:                 defaults={
+  159:                     'academic_year': self.examination.academic_year,
+  160:                     'term': self.examination.term,
+  161:                     'total_score': result['total_score'],
+  162:                     'average_score': result['average_score'],
+  163:                     'overall_grade': result['overall_grade'],
+  164:                     'overall_points': result['overall_points'],
+  165:                 }
+  166:             )
+  167:             
+  168:             # Save subject performances
+  169:             SubjectPerformance.objects.filter(analysis=analysis).delete()
+  170:             for perf in result['subject_performances']:
+  171:                 SubjectPerformance.objects.create(
+  172:                     analysis=analysis,
+  173:                     subject=perf['subject'],
+  174:                     score=perf['score'],
+  175:                     grade=perf['grade'],
+  176:                     points=perf['points']
+  177:                 )
+  178:     
+  179:     def _calculate_rankings(self, results):
+  180:         """Calculate student rankings"""
+
+
+==========================================================================================
+FILE: grading\kcse_engine.py
+REQUESTED LINES: 1 to 210
+==========================================================================================
+    1: from django.db.models import Q, Sum, Avg, Count
+    2: from decimal import Decimal
+    3: from .models import KCSEGradeRule, KCSEOverallCalculation, StudentKCSEGrade, StudentOverallKCSE
+    4: from marks.models import MarkEntry
+    5: 
+    6: class KCSEEngine:
+    7:     """KCSE/8-4-4 Grading Engine"""
+    8:     
+    9:     def __init__(self, examination, grade_level=None, stream=None):
+   10:         self.examination = examination
+   11:         self.grade_level = grade_level
+   12:         self.stream = stream
+   13:         self.scheme = self._get_scheme()
+   14:         self.grade_rules = self._get_grade_rules()
+   15:         self.calculation = self._get_calculation()
+   16:     
+   17:     def _get_scheme(self):
+   18:         """Get the assessment scheme for KCSE"""
+   19:         from .models import AssessmentScheme
+   20:         scheme = AssessmentScheme.objects.filter(
+   21:             curriculum='844',
+   22:             is_active=True
+   23:         ).first()
+   24:         return scheme
+   25:     
+   26:     def _get_grade_rules(self):
+   27:         """Get KCSE grade rules"""
+   28:         if not self.scheme:
+   29:             return {}
+   30:         
+   31:         rules = KCSEGradeRule.objects.filter(
+   32:             scheme=self.scheme,
+   33:             is_active=True
+   34:         ).order_by('order')
+   35:         
+   36:         # Organize by subject
+   37:         subject_rules = {}
+   38:         all_rules = []
+   39:         
+   40:         for rule in rules:
+   41:             if rule.subject_scope == 'ALL':
+   42:                 all_rules.append(rule)
+   43:             else:
+   44:                 if rule.subject_id not in subject_rules:
+   45:                     subject_rules[rule.subject_id] = []
+   46:                 subject_rules[rule.subject_id].append(rule)
+   47:         
+   48:         return {
+   49:             'all': all_rules,
+   50:             'subject': subject_rules
+   51:         }
+   52:     
+   53:     def _get_calculation(self):
+   54:         """Get KCSE overall calculation methodology"""
+   55:         if not self.scheme:
+   56:             return None
+   57:         
+   58:         return KCSEOverallCalculation.objects.filter(
+   59:             scheme=self.scheme,
+   60:             is_active=True
+   61:         ).first()
+   62:     
+   63:     def get_grade_and_points(self, score, subject_id=None):
+   64:         """Get grade and points for a raw mark.
+   65: 
+   66:         Robust against a missing AssessmentScheme:
+   67:         - falls back to hardcoded KCSE_GRADES if no scheme exists
+   68:         """
+   69:         # Defensive: grade_rules may be {} when no active scheme exists
+   70:         subject_rules = self.grade_rules.get('subject', {}) if isinstance(self.grade_rules, dict) else {}
+   71:         all_rules = self.grade_rules.get('all', []) if isinstance(self.grade_rules, dict) else []
+   72: 
+   73:         rules = []
+   74:         if subject_id and subject_id in subject_rules:
+   75:             rules = subject_rules[subject_id]
+   76:         if not rules:
+   77:             rules = all_rules
+   78: 
+   79:         # Fallback: hardcoded KCSE grade boundaries from services.py
+   80:         if not rules:
+   81:             from .services import KCSE_GRADES
+   82:             for grade, grade_name, points, min_s, max_s in KCSE_GRADES:
+   83:                 if min_s <= score <= max_s:
+   84:                     return {
+   85:                         'grade': grade,
+   86:                         'grade_name': grade_name,
+   87:                         'points': float(points),
+   88:                         'descriptor': grade_name,
+   89:                     }
+   90:             return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
+   91: 
+   92:         for rule in rules:
+   93:             if rule.min_score <= score <= rule.max_score:
+   94:                 return {
+   95:                     'grade': rule.grade,
+   96:                     'grade_name': rule.grade_name,
+   97:                     'points': float(rule.points),
+   98:                     'descriptor': rule.descriptor,
+   99:                 }
+  100: 
+  101:         return {'grade': 'E', 'grade_name': 'Poor', 'points': 1, 'descriptor': 'Below minimum'}
+  102:     
+  103:     def process_student(self, student):
+  104:         """Process a single student's KCSE results"""
+  105:         # Get marks for this student
+  106:         marks = MarkEntry.objects.filter(
+  107:             student=student,
+  108:             examination=self.examination,
+  109:             is_active=True
+  110:         ).select_related('subject')
+  111:         
+  112:         if not marks.exists():
+  113:             return None
+  114:         
+  115:         grades = []
+  116:         total_points = 0
+  117:         core_subjects = []
+  118:         best_subjects = []
+  119:         
+  120:         # Process each subject
+  121:         for mark in marks:
+  122:             score = float(mark.score or 0)
+  123:             grade_result = self.get_grade_and_points(score, mark.subject_id)
+  124:             
+  125:             # Determine if this is a core subject
+  126:             is_core = False
+  127:             if self.calculation:
+  128:                 is_core = self.calculation.core_subjects.filter(id=mark.subject_id).exists()
+  129:             
+  130:             student_grade, _created = StudentKCSEGrade.objects.update_or_create(
+  131:                 student=student,
+  132:                 examination=self.examination,
+  133:                 subject=mark.subject,
+  134:                 defaults={
+  135:                     'raw_mark': score,
+  136:                     'grade': grade_result['grade'],
+  137:                     'points': grade_result['points'],
+  138:                     'is_core': is_core,
+  139:                 }
+  140:             )
+  141:             
+  142:             grades.append({
+  143:                 'subject': mark.subject,
+  144:                 'raw_mark': score,
+  145:                 'grade': grade_result['grade'],
+  146:                 'points': grade_result['points'],
+  147:                 'is_core': is_core
+  148:             })
+  149:             
+  150:             if is_core:
+  151:                 core_subjects.append(grade_result['points'])
+  152:             else:
+  153:                 best_subjects.append(grade_result['points'])
+  154:         
+  155:         # Calculate overall
+  156:         if self.calculation:
+  157:             return self._calculate_overall(student, grades, core_subjects, best_subjects)
+  158:         else:
+  159:             return grades
+  160:     
+  161:     def _calculate_overall(self, student, grades, core_subjects, best_subjects):
+  162:         """Calculate overall KCSE result"""
+  163:         # Sort best subjects by points descending
+  164:         best_subjects.sort(reverse=True)
+  165:         
+  166:         # Take the required number of best subjects
+  167:         if self.calculation:
+  168:             best_count = min(self.calculation.best_subject_count, len(best_subjects))
+  169:             selected_best = best_subjects[:best_count]
+  170:         else:
+  171:             selected_best = best_subjects[:5]
+  172:         
+  173:         # Total points = core subjects + best subjects
+  174:         total_points = sum(core_subjects) + sum(selected_best)
+  175:         total_subjects_used = len(core_subjects) + len(selected_best)
+  176:         
+  177:         # Calculate mean grade
+  178:         if total_subjects_used > 0:
+  179:             mean_score = total_points / total_subjects_used
+  180:             mean_grade = self._get_mean_grade(mean_score)
+  181:         else:
+  182:             mean_grade = 'E'
+  183:             mean_score = 0
+  184:         
+  185:         # Save overall result
+  186:         overall, _created = StudentOverallKCSE.objects.update_or_create(
+  187:             student=student,
+  188:             examination=self.examination,
+  189:             defaults={
+  190:                 'total_points': total_points,
+  191:                 'mean_grade': mean_grade,
+  192:                 'mean_score': mean_score,
+  193:                 'core_subjects_count': len(core_subjects),
+  194:                 'best_subjects_count': len(selected_best),
+  195:                 'total_subjects_used': total_subjects_used,
+  196:             }
+  197:         )
+  198:         
+  199:         return {
+  200:             'total_points': total_points,
+  201:             'mean_score': mean_score,
+  202:             'mean_grade': mean_grade,
+  203:             'core_count': len(core_subjects),
+  204:             'best_count': len(selected_best),
+  205:             'total_used': total_subjects_used,
+  206:             'grades': grades
+  207:         }
+  208:     
+  209:     def _get_mean_grade(self, mean_score):
+  210:         """Convert mean score to KCSE grade"""
+
+
+==========================================================================================
+FILE: reports\urls.py
+REQUESTED LINES: 1 to 160
+==========================================================================================
+    1: from django.urls import path
+    2: from . import views
+    3: 
+    4: app_name = 'reports'
+    5: 
+    6: urlpatterns = [
+    7:     path('', views.report_dashboard, name='dashboard'),
+    8:     path('list/', views.report_list, name='list'),
+    9:     path('student/<int:student_id>/', views.generate_student_report, name='student_report'),
+   10:     path('class/', views.generate_class_report, name='class_report'),
+   11:     path('school/', views.school_report, name='school_report'),
+   12:     path('<int:report_id>/', views.report_detail, name='detail'),
+   13:     path('<int:report_id>/word/', views.generate_word_report, name='word_report'),
+   14:     path('<int:report_id>/approve/', views.report_approve, name='approve'),
+   15:     path('<int:report_id>/publish/', views.report_publish, name='publish'),
+   16: ]

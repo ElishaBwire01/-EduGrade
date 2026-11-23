@@ -1,0 +1,271 @@
+﻿"""Import KICD curriculum content from CSV.
+
+Usage:
+    python manage.py import_kicd path/to/file.csv --dry-run
+    python manage.py import_kicd path/to/file.csv
+
+CSV columns (header required):
+    curriculum, grade, learning_area_code, learning_area_name,
+    strand, sub_strand, outcome,
+    [experience, inquiry, competencies, values, pcis]
+
+M2M format: semicolon-separated codes, e.g. 'CC;CTPS' or 'INTEG;RESP'
+"""
+import csv
+from pathlib import Path
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
+
+from school.models import (
+    CurriculumVersion, GradeLevel, LearningArea,
+    Strand, SubStrand, LearningOutcome, LearningExperience,
+    InquiryQuestion, CoreCompetency, CoreValue, PCI,
+)
+
+
+REQUIRED_COLUMNS = {
+    'curriculum', 'grade', 'learning_area_code', 'learning_area_name',
+    'strand', 'sub_strand', 'outcome',
+}
+
+
+class Command(BaseCommand):
+    help = 'Import KICD curriculum content from a CSV file.'
+
+    def add_arguments(self, parser):
+        parser.add_argument('csv_path', type=str, help='Path to CSV file')
+        parser.add_argument('--dry-run', action='store_true')
+        parser.add_argument('--no-rollback', action='store_true')
+        parser.add_argument('--strict', action='store_true')
+        parser.add_argument('--curriculum-version', type=str, default=None)
+
+    # -------- CSV loader --------
+    def _load_csv(self, path):
+        p = Path(path)
+        if not p.exists():
+            raise CommandError(f'File not found: {path}')
+        with p.open('r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f)
+            headers = set(reader.fieldnames or [])
+            missing = REQUIRED_COLUMNS - headers
+            if missing:
+                raise CommandError(f'CSV missing required columns: {sorted(missing)}')
+            rows = []
+            for i, row in enumerate(reader, start=2):
+                row['_line'] = i
+                rows.append(row)
+            return rows
+
+    # -------- dry-run tracking --------
+    def _track(self, cache, key, model, lookup, defaults):
+        """In-memory equivalent of get_or_create for dry-run mode."""
+        if key in cache:
+            return cache[key], False
+        obj = model(**lookup, **(defaults or {}))
+        cache[key] = obj
+        return obj, True
+
+    # -------- real get_or_create --------
+    def _get_or_create(self, model, lookup, defaults):
+        obj = model.objects.filter(**lookup).first()
+        if obj:
+            return obj, False
+        return model.objects.create(**lookup, **(defaults or {})), True
+
+    # -------- M2M --------
+    def _resolve_m2m(self, model, codes_str, label):
+        result = []
+        if not codes_str:
+            return result
+        for code in [c.strip() for c in codes_str.split(';') if c.strip()]:
+            obj = model.objects.filter(code=code).first()
+            if obj:
+                result.append(obj)
+            else:
+                msg = f'{label} code {code!r} not found - skipped'
+                if self.strict:
+                    raise CommandError(msg)
+                self.stdout.write(self.style.WARNING(f'    ! {msg}'))
+        return result
+
+    # -------- main --------
+    def handle(self, *args, **options):
+        self.dry_run = options['dry_run']
+        self.strict  = options['strict']
+        path         = options['csv_path']
+        no_rollback  = options['no_rollback']
+        version_code = options['curriculum_version']
+
+        rows = self._load_csv(path)
+        self.stdout.write(f'Loaded {len(rows)} rows from {path}')
+
+        if version_code:
+            ver = CurriculumVersion.objects.filter(version_code=version_code).first()
+            if not ver:
+                raise CommandError(f'CurriculumVersion {version_code!r} not found')
+        else:
+            ver = CurriculumVersion.objects.filter(is_current=True).first()
+            if not ver:
+                raise CommandError('No current CurriculumVersion found')
+        self.stdout.write(f'Target version: {ver} (curriculum={ver.curriculum.code})')
+
+        # Grade cache
+        grades_by_key = {}
+        for gl in GradeLevel.objects.select_related('curriculum').all():
+            grades_by_key[(gl.curriculum.code, gl.name)] = gl
+
+        # Cache of objects seen during this run (so dry-run chains don't need DB rows)
+        la_cache, st_cache, ss_cache, lo_cache = {}, {}, {}, {}
+
+        stats = {
+            'rows': len(rows),
+            'learning_area_created': 0, 'learning_area_existing': 0,
+            'strand_created': 0, 'strand_existing': 0,
+            'substrand_created': 0, 'substrand_existing': 0,
+            'outcome_created': 0, 'outcome_existing': 0,
+            'experience_created': 0, 'inquiry_created': 0,
+            'errors': [],
+        }
+
+        def _process_row(row):
+            # --- resolve curriculum + grade ---
+            curr_code = (row.get('curriculum') or ver.curriculum.code).strip()
+            grade_name = (row.get('grade') or '').strip()
+            grade = grades_by_key.get((curr_code, grade_name))
+            if not grade:
+                raise ValueError(f'GradeLevel {grade_name!r} not found under {curr_code!r}')
+
+            # --- LearningArea ---
+            la_code = (row.get('learning_area_code') or '').strip()
+            la_name = (row.get('learning_area_name') or '').strip()
+            la_key = (ver.id, grade.id, la_code)
+            if self.dry_run:
+                la, created = self._track(la_cache, la_key, LearningArea,
+                    {'curriculum_version': ver, 'grade_level': grade, 'code': la_code},
+                    {'name': la_name, 'is_core': True, 'is_active': True})
+            else:
+                la, created = self._get_or_create(LearningArea,
+                    {'curriculum_version': ver, 'grade_level': grade, 'code': la_code},
+                    {'name': la_name, 'is_core': True, 'is_active': True})
+            if created: stats['learning_area_created'] += 1
+            else:       stats['learning_area_existing'] += 1
+
+            # --- Strand ---
+            st_name = (row.get('strand') or '').strip()
+            if not st_name:
+                raise ValueError('strand column empty')
+            st_key = (la_key, st_name)
+            if self.dry_run:
+                st, created = self._track(st_cache, st_key, Strand,
+                    {'learning_area': la, 'name': st_name},
+                    {'is_active': True})
+            else:
+                st, created = self._get_or_create(Strand,
+                    {'learning_area': la, 'name': st_name},
+                    {'is_active': True})
+            if created: stats['strand_created'] += 1
+            else:       stats['strand_existing'] += 1
+
+            # --- SubStrand ---
+            ss_name = (row.get('sub_strand') or '').strip()
+            if not ss_name:
+                raise ValueError('sub_strand column empty')
+            ss_key = (st_key, ss_name)
+            if self.dry_run:
+                ss, created = self._track(ss_cache, ss_key, SubStrand,
+                    {'strand': st, 'name': ss_name},
+                    {'is_active': True})
+            else:
+                ss, created = self._get_or_create(SubStrand,
+                    {'strand': st, 'name': ss_name},
+                    {'is_active': True})
+            if created: stats['substrand_created'] += 1
+            else:       stats['substrand_existing'] += 1
+
+            # --- LearningOutcome ---
+            outcome_text = (row.get('outcome') or '').strip()
+            if not outcome_text:
+                raise ValueError('outcome column empty')
+            lo_key = (ss_key, outcome_text)
+            if self.dry_run:
+                lo, created = self._track(lo_cache, lo_key, LearningOutcome,
+                    {'sub_strand': ss, 'outcome_text': outcome_text},
+                    {'is_active': True})
+            else:
+                lo, created = self._get_or_create(LearningOutcome,
+                    {'sub_strand': ss, 'outcome_text': outcome_text},
+                    {'is_active': True})
+            if created: stats['outcome_created'] += 1
+            else:       stats['outcome_existing'] += 1
+
+            # --- LearningExperience ---
+            exp_text = (row.get('experience') or '').strip()
+            if exp_text:
+                if self.dry_run:
+                    stats['experience_created'] += 1
+                else:
+                    _, created = LearningExperience.objects.get_or_create(
+                        learning_outcome=lo,
+                        experience_text=exp_text,
+                        defaults={'is_active': True},
+                    )
+                    if created: stats['experience_created'] += 1
+
+            # --- InquiryQuestion ---
+            inq_text = (row.get('inquiry') or '').strip()
+            if inq_text:
+                if self.dry_run:
+                    stats['inquiry_created'] += 1
+                else:
+                    _, created = InquiryQuestion.objects.get_or_create(
+                        learning_outcome=lo,
+                        question_text=inq_text,
+                        defaults={'is_active': True},
+                    )
+                    if created: stats['inquiry_created'] += 1
+
+            # --- M2M (only in real run) ---
+            if not self.dry_run:
+                comps = self._resolve_m2m(CoreCompetency, row.get('competencies') or '', 'competency')
+                vals  = self._resolve_m2m(CoreValue,      row.get('values') or '',       'value')
+                pcis  = self._resolve_m2m(PCI,            row.get('pcis') or '',         'PCI')
+                if comps: lo.competencies.set(comps)
+                if vals:  lo.core_values.set(vals)
+                if pcis:  lo.pcis.set(pcis)
+
+        def _run_all():
+            for row in rows:
+                try:
+                    _process_row(row)
+                except Exception as e:
+                    line = row.get('_line', '?')
+                    stats['errors'].append(f'line {line}: {type(e).__name__}: {e}')
+                    self.stdout.write(self.style.ERROR(f'  [ERR ] line {line}: {e}'))
+
+        if self.dry_run or no_rollback:
+            _run_all()
+        else:
+            with transaction.atomic():
+                _run_all()
+                if stats['errors']:
+                    raise CommandError('Errors encountered - rolled back')
+
+        # -------- summary --------
+        self.stdout.write('')
+        self.stdout.write('=' * 60)
+        self.stdout.write('SUMMARY')
+        self.stdout.write('=' * 60)
+        for k, v in stats.items():
+            if k == 'errors':
+                continue
+            self.stdout.write(f'  {k:22} : {v}')
+        if stats['errors']:
+            self.stdout.write(self.style.ERROR(f'  errors                 : {len(stats["errors"])}'))
+            for e in stats['errors'][:10]:
+                self.stdout.write(self.style.ERROR(f'    {e}'))
+        else:
+            self.stdout.write(self.style.SUCCESS('  errors                 : 0'))
+        if self.dry_run:
+            self.stdout.write(self.style.WARNING('\nDRY RUN - no changes were written.'))
+        else:
+            self.stdout.write(self.style.SUCCESS('\nImport complete.'))

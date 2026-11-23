@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from examinations.models import Examination
 from school.models import Subject, GradeLevel, Stream
 from students.models import Student
@@ -109,3 +110,4 @@ class MarkCorrection(models.Model):
 
     def __str__(self):
         return f"{self.mark_entry.student.admission_number} - {self.old_score} -> {self.new_score}"
+

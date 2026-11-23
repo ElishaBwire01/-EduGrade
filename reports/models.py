@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from school.models import AcademicYear, Term
 from students.models import Student
 from examinations.models import Examination
@@ -109,3 +110,4 @@ class ReportComment(models.Model):
     class Meta:
         db_table = 'report_comments'
         ordering = ['created_at']
+

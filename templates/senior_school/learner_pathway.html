@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Pathway — {{ student.first_name }}{% endblock %}
+{% block page_title %}Learner Pathway{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="mb-3">
+        <a href="{% url 'students:detail' student.id %}" class="btn btn-outline-secondary btn-sm">
+            <i class="fa-solid fa-arrow-left me-1"></i>Back to Student
+        </a>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <h5 class="mb-1">{{ student.first_name }} {{ student.last_name }}</h5>
+            <small class="text-muted">{{ student.admission_number }}
+                {% if student.current_grade_level %} · {{ student.current_grade_level.name }}{% endif %}
+            </small>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><i class="fa-solid fa-check-circle me-2"></i>Placement</div>
+                <div class="card-body">
+                    {% if placement %}
+                    <dl class="mb-0">
+                        <dt>Pathway</dt><dd>{{ placement.pathway.name }}</dd>
+                        {% if placement.track %}<dt>Track</dt><dd>{{ placement.track.name }}</dd>{% endif %}
+                        {% if placement.combination %}<dt>Combination</dt><dd>{{ placement.combination.code }}</dd>{% endif %}
+                        <dt>Confirmed</dt><dd>{{ placement.confirmed_on|default:"—" }}</dd>
+                    </dl>
+                    {% else %}
+                    <p class="text-muted mb-0">No placement recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><i class="fa-solid fa-briefcase me-2"></i>Career Interests</div>
+                <div class="card-body">
+                    {% if careers %}
+                    <ol class="mb-0">
+                        {% for c in careers %}
+                        <li>{{ c.career_name }}
+                            {% if c.related_pathway %}<span class="badge bg-secondary">{{ c.related_pathway.code }}</span>{% endif %}
+                        </li>
+                        {% endfor %}
+                    </ol>
+                    {% else %}
+                    <p class="text-muted mb-0">No career interests recorded.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header"><i class="fa-solid fa-clock-rotate-left me-2"></i>Recent Preferences</div>
+                <div class="card-body">
+                    {% if preferences %}
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Pathway</th><th>Track</th><th>Status</th><th>Created</th></tr></thead>
+                        <tbody>
+                            {% for p in preferences %}
+                            <tr>
+                                <td>{{ p.pathway.name }}</td>
+                                <td>{{ p.track.name|default:"—" }}</td>
+                                <td><span class="badge bg-info">{{ p.get_status_display }}</span></td>
+                                <td>{{ p.created_at|date:"M d, Y" }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-muted mb-0">No preferences recorded.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

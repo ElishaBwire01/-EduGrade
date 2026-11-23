@@ -477,3 +477,39 @@ def send_approval_reminder(user):
             notification_type="APPROVAL_REQUEST",
             url="/teachers/",
         )
+# ========================================================
+# Exam-status enforcement (Option 2: admin override)
+# ========================================================
+
+def assert_exam_editable(exam, user, action='edit'):
+    """Raise PermissionDenied when a mark action is not allowed on this exam.
+
+    Rules (Option 2 - admin override):
+      DRAFT      : no mark entry at all (setup phase)         -> blocked for everyone
+      ACTIVE     : allowed                                     -> all
+      LOCKED     : read-only for teachers, admin can edit      -> non-admin blocked
+      PUBLISHED  : read-only for teachers, admin can edit      -> non-admin blocked
+      ARCHIVED   : frozen for everyone (historical)            -> blocked for everyone
+
+    Returns None on success; raises PermissionDenied otherwise.
+    """
+    from django.core.exceptions import PermissionDenied
+    status = (exam.status or '').upper()
+    is_admin_user = is_admin(user)
+
+    if status == 'DRAFT':
+        raise PermissionDenied(
+            f'Examination "{exam.code}" is still in DRAFT. '
+            f'Activate it before entering or changing marks.'
+        )
+    if status == 'ARCHIVED':
+        raise PermissionDenied(
+            f'Examination "{exam.code}" is ARCHIVED and locked for history. '
+            f'It cannot be changed.'
+        )
+    if status in ('LOCKED', 'PUBLISHED') and not is_admin_user:
+        raise PermissionDenied(
+            f'Examination "{exam.code}" is {status}. '
+            f'Only administrators can change marks in this state.'
+        )
+    return None

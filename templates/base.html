@@ -2,116 +2,294 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}EduGrade Analytics System{% endblock %}</title>
-    {% load static teacher_extras %}
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}EduGrade{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <style>
+        :root{
+            --eg-primary:#4f46e5; --eg-primary-2:#7c3aed; --eg-bg:#f5f6fb; --eg-surface:#fff;
+            --eg-ink:#0f172a; --eg-ink-2:#475569; --eg-line:#e5e7eb;
+            --eg-radius:14px; --eg-radius-sm:10px;
+            --eg-shadow:0 1px 2px rgba(15,23,42,.05),0 8px 24px rgba(15,23,42,.06);
+            --eg-shadow-sm:0 1px 2px rgba(15,23,42,.06);
+            --eg-sidebar-w:260px;
+        }
+        *{font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}
+        body{background:var(--eg-bg);color:var(--eg-ink);margin:0;min-height:100vh}
+        a{color:var(--eg-primary);text-decoration:none}
+        a:hover{color:var(--eg-primary-2)}
+
+        /* -------- Sidebar -------- */
+        .eg-sidebar{position:fixed;top:0;left:0;bottom:0;width:var(--eg-sidebar-w);
+            background:linear-gradient(180deg,#1e1b4b 0%,#312e81 100%);
+            color:#c7d2fe;padding:1.25rem .75rem;overflow-y:auto;z-index:1030;
+            transition:transform .25s ease}
+        .eg-sidebar::-webkit-scrollbar{width:6px}
+        .eg-sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
+        .eg-brand{display:flex;align-items:center;gap:.6rem;color:#fff;font-weight:800;
+            font-size:1.15rem;padding:.35rem .5rem 1.1rem;letter-spacing:-.02em}
+        .eg-brand i{background:linear-gradient(135deg,#a78bfa,#60a5fa);-webkit-background-clip:text;
+            background-clip:text;-webkit-text-fill-color:transparent;font-size:1.5rem}
+        .eg-nav-section{margin-top:1rem;font-size:.7rem;letter-spacing:.12em;
+            text-transform:uppercase;color:#818cf8;padding:.4rem .75rem;font-weight:700}
+        .eg-nav-link{display:flex;align-items:center;gap:.7rem;color:#c7d2fe;
+            padding:.62rem .8rem;border-radius:var(--eg-radius-sm);margin:.15rem 0;
+            font-size:.9rem;font-weight:500;transition:all .15s}
+        .eg-nav-link i{width:18px;text-align:center;font-size:.95rem;opacity:.85}
+        .eg-nav-link:hover,.eg-nav-link.active{background:rgba(255,255,255,.1);color:#fff}
+        .eg-nav-link.active{background:rgba(255,255,255,.16);box-shadow:inset 3px 0 0 #a78bfa}
+
+        /* -------- Topbar -------- */
+        .eg-topbar{position:fixed;top:0;left:var(--eg-sidebar-w);right:0;height:64px;
+            background:rgba(255,255,255,.85);backdrop-filter:blur(10px);
+            border-bottom:1px solid var(--eg-line);display:flex;align-items:center;
+            padding:0 1.5rem;gap:1rem;z-index:1020}
+        .eg-topbar .eg-title{font-weight:700;font-size:1.05rem;color:var(--eg-ink)}
+        .eg-topbar .eg-actions{margin-left:auto;display:flex;align-items:center;gap:.5rem}
+        .eg-icon-btn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;
+            border:none;background:transparent;color:var(--eg-ink-2);position:relative;
+            transition:background .15s}
+        .eg-icon-btn:hover{background:#eef2ff;color:var(--eg-primary)}
+        .eg-badge-dot{position:absolute;top:9px;right:9px;width:8px;height:8px;border-radius:50%;
+            background:#ef4444;border:2px solid #fff}
+        .eg-avatar{width:38px;height:38px;border-radius:50%;
+            background:linear-gradient(135deg,var(--eg-primary),var(--eg-primary-2));
+            color:#fff;display:grid;place-items:center;font-weight:700;font-size:.85rem}
+
+        /* -------- Main -------- */
+        .eg-main{margin-left:var(--eg-sidebar-w);padding:calc(64px + 1.5rem) 1.5rem 2rem;
+            min-height:100vh}
+        @media(max-width:991.98px){
+            .eg-sidebar{transform:translateX(-100%)}
+            .eg-sidebar.show{transform:translateX(0)}
+            .eg-topbar{left:0}
+            .eg-main{margin-left:0}
+        }
+
+        /* -------- Page header -------- */
+        .eg-page-head{display:flex;flex-wrap:wrap;align-items:flex-end;
+            justify-content:space-between;gap:1rem;margin-bottom:1.5rem}
+        .eg-page-head h1{font-size:1.55rem;font-weight:800;margin:0;letter-spacing:-.02em}
+        .eg-page-head p{margin:.25rem 0 0;color:var(--eg-ink-2);font-size:.9rem}
+
+        /* -------- Cards -------- */
+        .card{border:1px solid var(--eg-line);border-radius:var(--eg-radius);
+            box-shadow:var(--eg-shadow-sm);background:var(--eg-surface)}
+        .card-header{background:transparent;border-bottom:1px solid var(--eg-line);
+            font-weight:700;padding:1rem 1.25rem;border-radius:var(--eg-radius) var(--eg-radius) 0 0 !important}
+        .card-body{padding:1.25rem}
+        .stat-card{position:relative;overflow:hidden;border-radius:var(--eg-radius);
+            padding:1.25rem;background:var(--eg-surface);border:1px solid var(--eg-line);
+            box-shadow:var(--eg-shadow-sm);transition:transform .15s,box-shadow .15s}
+        .stat-card:hover{transform:translateY(-2px);box-shadow:var(--eg-shadow)}
+        .stat-card .stat-ico{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;
+            font-size:1.1rem;margin-bottom:.75rem}
+        .stat-card .stat-val{font-size:1.6rem;font-weight:800;line-height:1}
+        .stat-card .stat-lbl{color:var(--eg-ink-2);font-size:.82rem;font-weight:500;margin-top:.35rem}
+
+        /* -------- Buttons -------- */
+        .btn{border-radius:var(--eg-radius-sm);font-weight:600;font-size:.875rem;padding:.5rem 1rem}
+        .btn-primary{background:linear-gradient(135deg,var(--eg-primary),var(--eg-primary-2));
+            border:none}
+        .btn-primary:hover{filter:brightness(1.08)}
+        .btn-sm{padding:.35rem .7rem;font-size:.8rem}
+
+        /* -------- Tables -------- */
+        .table{--bs-table-bg:transparent;margin:0;font-size:.875rem}
+        .table>thead th{background:#f8fafc;color:var(--eg-ink-2);font-weight:700;
+            font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;
+            padding:.7rem .9rem;border-bottom:1px solid var(--eg-line);white-space:nowrap}
+        .table>tbody td{padding:.75rem .9rem;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+        .table>tbody tr:hover{background:#fafbff}
+        .table-responsive{border-radius:var(--eg-radius);border:1px solid var(--eg-line);
+            overflow:hidden;background:#fff}
+
+        /* -------- Forms -------- */
+        .form-control,.form-select{border-radius:var(--eg-radius-sm);border:1px solid var(--eg-line);
+            padding:.55rem .8rem;font-size:.9rem}
+        .form-control:focus,.form-select:focus{border-color:var(--eg-primary);
+            box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+        .form-label{font-weight:600;font-size:.82rem;color:var(--eg-ink);margin-bottom:.35rem}
+
+        /* -------- Badges -------- */
+        .badge{font-weight:600;padding:.35em .7em;border-radius:999px;font-size:.72rem}
+        .badge-soft-success{background:#dcfce7;color:#166534}
+        .badge-soft-warning{background:#fef3c7;color:#92400e}
+        .badge-soft-danger{background:#fee2e2;color:#991b1b}
+        .badge-soft-info{background:#dbeafe;color:#1e40af}
+        .badge-soft-secondary{background:#e5e7eb;color:#374151}
+
+        /* -------- Alerts / toasts -------- */
+        .eg-toast-wrap{position:fixed;top:76px;right:1.5rem;z-index:2000;max-width:360px}
+        .alert{border:none;border-radius:var(--eg-radius-sm);box-shadow:var(--eg-shadow-sm)}
+
+        /* -------- Modals -------- */
+        .modal-content{border:none;border-radius:var(--eg-radius);box-shadow:var(--eg-shadow)}
+        .modal-header{border-bottom:1px solid var(--eg-line);padding:1rem 1.25rem}
+        .modal-title{font-weight:700}
+        .modal-body{padding:1.25rem}
+
+        /* -------- Empty state -------- */
+        .eg-empty{text-align:center;padding:2.5rem 1rem;color:var(--eg-ink-2)}
+        .eg-empty i{font-size:2.25rem;color:#cbd5e1;margin-bottom:.75rem;display:block}
+    </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="app-body">
-{% if user.is_authenticated %}
-<div class="app-shell">
-    <aside class="sidebar" id="sidebar">
-        <div class="sidebar-brand">
-            <i class="fas fa-graduation-cap"></i>
-            <div><span>EduGrade</span><small>Analytics System</small></div>
-        </div>
-        <nav class="sidebar-menu">
-            <div class="menu-label">Main</div>
-            <a href="{% url 'core:dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' and request.resolver_match.app_name == 'core' %}active{% endif %}"><i class="fas fa-th-large"></i> Dashboard</a>
-            <a href="{% url 'teachers:my_status' %}" class="{% if request.resolver_match.url_name == 'my_status' %}active{% endif %}"><i class="fas fa-user-circle"></i> My Status</a>
-            {% if not user.is_staff and not user.is_superuser %}
-            {% if user|has_teacher_profile and not user|teacher_is_active %}
-            <a href="{% url 'teachers:request_approval' %}" class="text-warning"><i class="fas fa-bell"></i> Request Approval</a>
-            {% endif %}
-            {% endif %}
-            <div class="menu-label">Management</div>
-            <a href="{% url 'students:list' %}" class="{% if request.resolver_match.app_name == 'students' %}active{% endif %}"><i class="fas fa-users"></i> Students</a>
-            {% if user.is_staff or user.is_superuser %}
-            <a href="{% url 'teachers:list' %}" class="{% if request.resolver_match.url_name == 'list' %}active{% endif %}"><i class="fas fa-chalkboard-teacher"></i> Teachers</a>
-            <a href="{% url 'teachers:class_teacher_list' %}" class="{% if request.resolver_match.url_name == 'class_teacher_list' %}active{% endif %}"><i class="fas fa-users-gear"></i> Class Teachers</a>
-            {% endif %}
-            <a href="{% url 'examinations:list' %}" class="{% if request.resolver_match.app_name == 'examinations' %}active{% endif %}"><i class="fas fa-file-alt"></i> Examinations</a>
-            <div class="menu-label">Academics</div>
-            <a href="{% url 'marks:entry' %}"><i class="fas fa-edit"></i> Mark Entry</a>
-            {% if not user.is_staff and not user.is_superuser %}
-            <a href="{% url 'teachers:request_create' %}"><i class="fas fa-paper-plane"></i> Request Role/Assignment</a>
-            <a href="{% url 'teachers:requests' %}"><i class="fas fa-clipboard-list"></i> My Requests</a>
-            {% endif %}
-            {% if user.is_staff or user.is_superuser %}
-            <a href="{% url 'teachers:requests' %}" class="{% if request.resolver_match.url_name == 'requests' %}active{% endif %}"><i class="fas fa-clipboard-list"></i> Review Requests</a>
-            <a href="{% url 'marks:admin_mark_management' %}"><i class="fas fa-search-dollar"></i> Admin Mark Management</a>
-            {% endif %}
-            <a href="{% url 'grading:process' %}"><i class="fas fa-cogs"></i> Grading Engine</a>
-            <div class="menu-label">Reports</div>
-            <a href="{% url 'reports:dashboard' %}" class="{% if request.resolver_match.app_name == 'reports' %}active{% endif %}"><i class="fas fa-file-pdf"></i> Reports</a>
-            <a href="{% url 'reports:school_report' %}" class="{% if request.resolver_match.url_name == 'school_report' %}active{% endif %}"><i class="fas fa-school"></i> School Report</a>
-            {% if user.is_staff or user.is_superuser %}
-            <a href="{% url 'school:setup_dashboard' %}" class="{% if request.resolver_match.url_name == 'setup_dashboard' %}active{% endif %}"><i class="fas fa-sliders"></i> School Setup</a>
-            {% endif %}
-        </nav>
-    </aside>
+<body>
 
-    <main class="main-content">
-        <button class="mobile-toggle btn btn-primary mb-3" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" onclick="toggleSidebar(this)">
-            <i class="fas fa-bars"></i><span class="visually-hidden">Open navigation</span>
-        </button>
-        <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
-        <div class="top-nav">
-            <div class="page-title">
-                <h4>{% block page_title %}Dashboard{% endblock %}</h4>
-                <small>{% block page_subtitle %}Welcome to EduGrade Analytics System{% endblock %}</small>
-            </div>
-            <div class="user-info">
-                <a href="{% url 'core:notifications' %}" class="text-decoration-none text-dark me-2 position-relative" style="font-size: 18px;">
-                    <i class="fas fa-bell"></i>
-                    {% if unread_notification_count %}
-                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 10px;">
-                        {{ unread_notification_count }}
-                    </span>
-                    {% endif %}
-                </a>
-                <div class="avatar">{{ user.get_full_name|first|default:user.username|first|upper }}</div>
-                <div><div style="font-weight: 600; font-size: 14px;"><a href="{% url 'authentication:profile' %}" class="text-decoration-none text-dark">{{ user.get_full_name|default:user.username }}</a></div><div style="font-size: 11px; color: #6b7280;">{% if user.is_staff %}Administrator{% else %}Teacher{% endif %}</div></div>
-                <form method="post" action="{% url 'authentication:logout' %}" class="ms-2">
-                    {% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-sign-out-alt"></i></button>
-                </form>
-            </div>
+<!-- SIDEBAR -->
+<aside class="eg-sidebar" id="egSidebar">
+    <a href="{% url 'core:dashboard' %}" class="eg-brand">
+        <i class="fa-solid fa-graduation-cap"></i><span>EduGrade</span>
+    </a>
+
+    <div class="eg-nav-section">Overview</div>
+    <a href="{% url 'core:dashboard' %}" class="eg-nav-link"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
+    <a href="{% url 'core:notifications' %}" class="eg-nav-link"><i class="fa-solid fa-bell"></i> Notifications</a>
+
+    {% if user.is_staff or user.is_superuser %}
+
+      <div class="eg-nav-section">School Setup</div>
+      <a href="{% url 'school:setup_dashboard' %}" class="eg-nav-link"><i class="fa-solid fa-school"></i> Setup Dashboard</a>
+      <a href="{% url 'school:structure' %}" class="eg-nav-link"><i class="fa-solid fa-sitemap"></i> School Structure</a>
+
+      <div class="eg-nav-section">People</div>
+      <a href="{% url 'students:list' %}" class="eg-nav-link"><i class="fa-solid fa-user-graduate"></i> Students</a>
+      <a href="{% url 'students:create' %}" class="eg-nav-link"><i class="fa-solid fa-user-plus"></i> Add Student</a>
+      <a href="{% url 'teachers:list' %}" class="eg-nav-link"><i class="fa-solid fa-chalkboard-user"></i> Teachers</a>
+      <a href="{% url 'teachers:class_teacher_list' %}" class="eg-nav-link"><i class="fa-solid fa-users-rectangle"></i> Class Teachers</a>
+      <a href="{% url 'teachers:requests' %}" class="eg-nav-link"><i class="fa-solid fa-inbox"></i> Teacher Requests</a>
+      <a href="{% url 'teachers:request_approval' %}" class="eg-nav-link"><i class="fa-solid fa-circle-check"></i> Approve Requests</a>
+
+      <div class="eg-nav-section">Examinations</div>
+      <a href="{% url 'examinations:list' %}" class="eg-nav-link"><i class="fa-solid fa-file-pen"></i> All Examinations</a>
+      <a href="{% url 'examinations:create' %}" class="eg-nav-link"><i class="fa-solid fa-plus"></i> Create Examination</a>
+
+      <div class="eg-nav-section">Marks</div>
+      <a href="{% url 'marks:admin_mark_management' %}" class="eg-nav-link"><i class="fa-solid fa-table-list"></i> All Marks</a>
+      <a href="{% url 'marks:admin_mark_create' %}" class="eg-nav-link"><i class="fa-solid fa-plus"></i> New Mark</a>
+      <a href="{% url 'marks:view' %}" class="eg-nav-link"><i class="fa-solid fa-eye"></i> View Marks</a>
+      <a href="{% url 'marks:correction' %}" class="eg-nav-link"><i class="fa-solid fa-pen-to-square"></i> Corrections</a>
+
+      <div class="eg-nav-section">Grading &amp; Reports</div>
+      <a href="{% url 'grading:process' %}" class="eg-nav-link"><i class="fa-solid fa-calculator"></i> Process Grades</a>
+      <a href="{% url 'grading:systems' %}" class="eg-nav-link"><i class="fa-solid fa-scale-balanced"></i> Grading Systems</a>
+      <a href="{% url 'reports:dashboard' %}" class="eg-nav-link"><i class="fa-solid fa-file-lines"></i> Reports Home</a>
+      <a href="{% url 'reports:list' %}" class="eg-nav-link"><i class="fa-solid fa-list"></i> All Reports</a>
+      <a href="{% url 'reports:school_report' %}" class="eg-nav-link"><i class="fa-solid fa-building-columns"></i> School Report</a>
+      <a href="{% url 'reports:class_report' %}" class="eg-nav-link"><i class="fa-solid fa-people-group"></i> Class Report</a>
+
+      <div class="eg-nav-section">System</div>
+      <a href="/admin/" class="eg-nav-link"><i class="fa-solid fa-shield-halved"></i> Django Admin</a>
+
+    {% else %}
+
+      {% if teacher_profile or user.teacherprofile %}
+
+        <div class="eg-nav-section">My Teaching</div>
+        <a href="{% url 'teachers:my_status' %}" class="eg-nav-link"><i class="fa-solid fa-user-circle"></i> My Status</a>
+        <a href="{% url 'marks:entry' %}" class="eg-nav-link"><i class="fa-solid fa-pen-to-square"></i> Enter Marks</a>
+        <a href="{% url 'marks:view' %}" class="eg-nav-link"><i class="fa-solid fa-eye"></i> View Marks</a>
+        <a href="{% url 'marks:correction' %}" class="eg-nav-link"><i class="fa-solid fa-wrench"></i> Request Corrections</a>
+
+        <div class="eg-nav-section">Requests</div>
+        <a href="{% url 'teachers:request_create' %}" class="eg-nav-link"><i class="fa-solid fa-paper-plane"></i> New Request</a>
+        <a href="{% url 'teachers:requests' %}" class="eg-nav-link"><i class="fa-solid fa-list-check"></i> My Requests</a>
+
+      {% endif %}
+
+      <div class="eg-nav-section">Academics</div>
+      <a href="{% url 'students:list' %}" class="eg-nav-link"><i class="fa-solid fa-user-graduate"></i> Students</a>
+      <a href="{% url 'examinations:list' %}" class="eg-nav-link"><i class="fa-solid fa-file-pen"></i> Examinations</a>
+
+      <div class="eg-nav-section">Reports</div>
+      <a href="{% url 'reports:dashboard' %}" class="eg-nav-link"><i class="fa-solid fa-file-lines"></i> Reports</a>
+
+    {% endif %}
+
+    <div class="eg-nav-section">Account</div>
+    <a href="{% url 'authentication:profile' %}" class="eg-nav-link"><i class="fa-regular fa-user"></i> My Profile</a>
+</aside>
+
+<!-- TOPBAR -->
+<header class="eg-topbar">
+    <button class="eg-icon-btn d-lg-none" id="egSidebarToggle" aria-label="Menu">
+        <i class="fa-solid fa-bars"></i>
+    </button>
+    <span class="eg-title">{% block page_title %}Dashboard{% endblock %}</span>
+    <div class="eg-actions">
+        <a href="{% url 'core:notifications' %}" class="eg-icon-btn" aria-label="Notifications">
+            <i class="fa-regular fa-bell"></i>
+            {% block notification_dot %}{% endblock %}
+        </a>
+        <div class="dropdown">
+            <button class="eg-icon-btn" data-bs-toggle="dropdown" aria-label="User">
+                <span class="eg-avatar">{{ user.username|slice:":1"|upper }}</span>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2" style="border-radius:12px">
+                <li class="px-3 py-2">
+                    <div class="fw-bold">{{ user.get_full_name|default:user.username }}</div>
+                    <small class="text-muted">{{ user.email }}</small>
+                </li>
+            <li class="nav-item"><a class="nav-link" href="{% url 'senior_school:pathway_list' %}"><i class="fa-solid fa-route me-2"></i>Senior School</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{% url 'authentication:profile' %}"><i class="fa-regular fa-user me-2"></i>Profile</a></li>
+                {% if user.is_staff %}<li><a class="dropdown-item" href="/admin/"><i class="fa-solid fa-shield-halved me-2"></i>Admin</a></li>{% endif %}
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                    <form method="post" action="{% url 'authentication:logout' %}" class="m-0">
+                        {% csrf_token %}
+                        <button class="dropdown-item text-danger" type="submit"><i class="fa-solid fa-arrow-right-from-bracket me-2"></i>Log out</button>
+                    </form>
+                </li>
+            </ul>
         </div>
-        {% if messages %}{% for message in messages %}<div class="alert alert-{{ message.tags }} alert-dismissible fade show">{{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>{% endfor %}{% endif %}
-{% else %}
-<div class="public-shell">
-{% endif %}
-        {% block content %}{% endblock %}
-{% if user.is_authenticated %}
-    </main>
+    </div>
+</header>
+
+<!-- MAIN -->
+<main class="eg-main">
+    {% block page_subtitle %}{% endblock %}
+    {% block content %}{% endblock %}
+</main>
+
+<!-- MESSAGES AS TOASTS -->
+{% if messages %}
+<div class="eg-toast-wrap" id="egToasts">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
 </div>
-{% else %}
-</div>
 {% endif %}
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    function toggleSidebar(button) {
-        const sidebar = document.getElementById('sidebar');
-        const backdrop = document.getElementById('sidebarBackdrop');
-        const isOpen = sidebar.classList.toggle('open');
-        backdrop.classList.toggle('visible', isOpen);
-        button.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    }
+(function(){
+    // Sidebar toggle (mobile)
+    var t=document.getElementById('egSidebarToggle'), s=document.getElementById('egSidebar');
+    if(t&&s){t.addEventListener('click',function(){s.classList.toggle('show')});}
 
-    function closeSidebar() {
-        const sidebar = document.getElementById('sidebar');
-        const backdrop = document.getElementById('sidebarBackdrop');
-        const button = document.querySelector('.mobile-toggle');
-        sidebar.classList.remove('open');
-        backdrop.classList.remove('visible');
-        if (button) button.setAttribute('aria-expanded', 'false');
-    }
+    // Active nav highlight
+    var path=location.pathname;
+    document.querySelectorAll('.eg-nav-link').forEach(function(a){
+        var href=a.getAttribute('href')||'';
+        if(href&&href!=='/'&&path.startsWith(href)) a.classList.add('active');
+    });
+
+    // Auto-dismiss toasts after 5s
+    var wrap=document.getElementById('egToasts');
+    if(wrap){setTimeout(function(){wrap.querySelectorAll('.alert').forEach(function(el){
+        bootstrap.Alert.getOrCreateInstance(el).close();
+    });},5000);}
+})();
 </script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>
+
 

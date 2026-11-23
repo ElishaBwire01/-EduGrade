@@ -12,4 +12,6 @@ urlpatterns = [
     # Admin mark management
     path('admin/', views.admin_mark_management, name='admin_mark_management'),
     path('admin/edit/<int:mark_entry_id>/', views.admin_mark_edit, name='admin_mark_edit'),
+    path('admin/create/', views.admin_mark_create, name='admin_mark_create'),
 ]
+

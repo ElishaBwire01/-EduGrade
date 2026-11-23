@@ -1,10 +1,16 @@
-
+﻿
 from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import get_user_model
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.http import HttpResponse, FileResponse
+from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 from django.db.models import Avg, Max, Min, Count, Sum
+from django.contrib.auth import get_user_model
 from .models import ReportTemplate, GeneratedReport, ReportComment
 from .generator import ReportGenerator
 from students.models import Student
@@ -13,6 +19,8 @@ from school.models import AcademicYear, Term, GradeLevel, Stream
 from teachers.models import TeacherProfile
 from marks.models import MarkEntry
 from core.access import is_admin, permitted_student_queryset, can_use_class, class_teacher_assignments
+
+User = get_user_model()
 
 # Import grading models with error handling
 try:
@@ -405,4 +413,5 @@ def report_publish(request, report_id):
         report.save()
         messages.success(request, 'Report published successfully!')
     return redirect('reports:detail', report_id=report.id)
+
 

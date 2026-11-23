@@ -1,5 +1,6 @@
 ﻿from django.db import models
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from school.models import AcademicYear, Curriculum, GradeLevel, Stream
 
 class Student(models.Model):
@@ -91,3 +92,4 @@ class StudentHistory(models.Model):
     class Meta:
         db_table = 'student_history'
         ordering = ['-academic_year', '-created_at']
+

@@ -1,0 +1,166 @@
+﻿{% extends "base.html" %}
+{% block title %}New Mark — Admin{% endblock %}
+{% block page_title %}New Mark (Admin){% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="fa-solid fa-plus me-2 text-primary"></i>Create / Overwrite a Mark</span>
+        <a href="{% url 'marks:admin_mark_management' %}" class="btn btn-sm btn-outline-secondary">
+          <i class="fa-solid fa-arrow-left me-1"></i>Back
+        </a>
+      </div>
+      <div class="card-body">
+        <form method="post" id="createMarkForm">
+          {% csrf_token %}
+
+          <div class="row g-3">
+            <div class="col-md-12">
+              <label class="form-label">Student <span class="text-danger">*</span></label>
+              <select class="form-select" name="student_id" id="studentSelect" required>
+                <option value="">— Select student —</option>
+                {% for s in students %}
+                  <option value="{{ s.id }}">
+                    {{ s.admission_number }} — {{ s.first_name }} {{ s.last_name }}
+                    {% if s.current_grade_level %} ({{ s.current_grade_level.name }}{% if s.current_stream %} / {{ s.current_stream.name }}{% endif %}){% endif %}
+                  </option>
+                {% endfor %}
+              </select>
+              <div class="form-text">Student's current grade/stream will be recorded on the mark.</div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Examination <span class="text-danger">*</span></label>
+              <select class="form-select" name="examination_id" id="examSelect" required>
+                <option value="">— Select exam —</option>
+                {% for e in examinations %}
+                  <option value="{{ e.id }}">
+                    {{ e.code }} — {{ e.name }} ({{ e.academic_year.year }} / {{ e.get_status_display }})
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Subject <span class="text-danger">*</span></label>
+              <select class="form-select" name="subject_id" id="subjectSelect" required disabled>
+                <option value="">— Select exam first —</option>
+              </select>
+              <div class="form-text">Only subjects assigned to the selected examination are listed.</div>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Score (0–100) <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" name="score"
+                     min="0" max="100" step="0.5" required>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label">Status</label>
+              <select class="form-select" name="status">
+                {% for val, label in status_choices %}
+                  <option value="{{ val }}" {% if val == 'DRAFT' %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-4 d-flex align-items-end">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="recalculate" name="recalculate" checked>
+                <label class="form-check-label" for="recalculate">Recalculate grades</label>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Reason <span class="text-muted small">(required to overwrite an existing mark)</span></label>
+              <textarea class="form-control" name="reason" rows="2"
+                        placeholder="e.g. missed exam — mark entered from paper script"></textarea>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2 mt-4">
+            <button type="submit" class="btn btn-primary">
+              <i class="fa-solid fa-check me-1"></i>Save Mark
+            </button>
+            <a href="{% url 'marks:admin_mark_management' %}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><i class="fa-solid fa-clock-rotate-left me-2"></i>Recent Mark Changes</div>
+      <div class="card-body p-0">
+        {% if recent %}
+        <div class="table-responsive">
+          <table class="table mb-0">
+            <thead>
+              <tr><th>Student</th><th>Exam · Subject</th><th>Score</th><th>By</th></tr>
+            </thead>
+            <tbody>
+              {% for m in recent %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ m.student.first_name }} {{ m.student.last_name }}</div>
+                  <small class="text-muted">{{ m.student.admission_number }}</small>
+                </td>
+                <td>
+                  <small>{{ m.examination.code }}</small><br>
+                  <small class="text-muted">{{ m.subject.short_name|default:m.subject.name }}</small>
+                </td>
+                <td><span class="fw-bold">{{ m.score|default:"—" }}</span></td>
+                <td><small class="text-muted">{{ m.updated_by.username|default:"—" }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="eg-empty p-4">
+          <i class="fa-regular fa-folder-open"></i>
+          No mark changes yet.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function(){
+  var examSubjects = {{ exam_subjects_json|safe }};
+  var examSel = document.getElementById('examSelect');
+  var subSel  = document.getElementById('subjectSelect');
+
+  examSel.addEventListener('change', function(){
+    subSel.innerHTML = '';
+    var subs = examSubjects[examSel.value] || [];
+    if (!examSel.value) {
+      subSel.disabled = true;
+      subSel.innerHTML = '<option value="">— Select exam first —</option>';
+      return;
+    }
+    if (subs.length === 0) {
+      subSel.disabled = true;
+      subSel.innerHTML = '<option value="">(No subjects on this exam)</option>';
+      return;
+    }
+    subSel.disabled = false;
+    subSel.innerHTML = '<option value="">— Select subject —</option>';
+    subs.forEach(function(s){
+      var o = document.createElement('option');
+      o.value = s.id; o.textContent = s.name;
+      subSel.appendChild(o);
+    });
+  });
+})();
+</script>
+{% endblock %}

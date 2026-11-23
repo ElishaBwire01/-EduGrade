@@ -3,7 +3,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'edugrade.settings')
 import django
 django.setup()
 
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from datetime import date, timedelta
 import random
 from decimal import Decimal
@@ -667,3 +668,4 @@ print("📊 Total Teachers: {}".format(TeacherProfile.objects.count()))
 print("📊 Total Exams: {}".format(Examination.objects.count()))
 print("📊 Total Marks: {}".format(MarkEntry.objects.count()))
 print("=" * 70)
+

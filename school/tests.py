@@ -1,5 +1,6 @@
-from django.test import TestCase
-from django.contrib.auth.models import User
+﻿from django.test import TestCase
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from datetime import date
 
 from core.models import AuditLog
@@ -130,3 +131,4 @@ class ReallocationServiceTests(TestCase):
 		self.assertEqual(self.student.current_grade_level_id, self.source_grade.id)
 		self.source_stream.refresh_from_db()
 		self.assertEqual(self.source_stream.name, 'South')
+

@@ -46,13 +46,30 @@ def process_marks(request):
         # Process based on curriculum
         try:
             if examination.curriculum.code == '844':
-                # Use KCSE engine
+                # Pre-check: does an active KCSE scheme exist?
+                from grading.services import get_scheme_for_curriculum
+                if not get_scheme_for_curriculum('844'):
+                    messages.error(
+                        request,
+                        'No active KCSE AssessmentScheme found. '
+                        'Run: python manage.py seed_grading'
+                    )
+                    return redirect('grading:process')
+
                 engine = KCSEEngine(examination, grade_level, stream)
                 results = engine.process_class()
                 messages.success(request, f'KCSE marks processed for {len(results)} students!')
-                
+
             elif examination.curriculum.code == 'CBC':
-                # Use CBC engine
+                from grading.services import get_scheme_for_curriculum
+                if not get_scheme_for_curriculum('CBC'):
+                    messages.error(
+                        request,
+                        'No active CBC AssessmentScheme found. '
+                        'Run: python manage.py seed_grading'
+                    )
+                    return redirect('grading:process')
+
                 engine = CBCEngine(examination, grade_level, stream)
                 results = engine.process_class()
                 messages.success(request, f'CBC assessments processed for {len(results)} students!')
@@ -279,12 +296,21 @@ def _cbc_student_report(request, student, examination):
 
 @login_required
 def grading_system_list(request):
-    """List grading systems"""
-    if not (request.user.is_staff or request.user.is_superuser):
-        messages.error(request, 'Only administrators can manage grading systems!')
-        return redirect('core:dashboard')
-    
-    schemes = AssessmentScheme.objects.all()
-    
-    context = {'schemes': schemes}
+    """List grading systems (KCSE schemes, CBC levels, rubrics, components)."""
+    from .models import (
+        AssessmentScheme, KCSEGradeRule, PerformanceLevel,
+        Rubric, AssessmentComponent,
+    )
+    schemes = AssessmentScheme.objects.all().order_by('name')
+    context = {
+        'schemes': schemes,
+        'kcse_rules_count': KCSEGradeRule.objects.count(),
+        'performance_levels_count': PerformanceLevel.objects.count(),
+        'rubrics_count': Rubric.objects.count(),
+        'components_count': AssessmentComponent.objects.count(),
+    }
     return render(request, 'grading/systems.html', context)
+
+
+
+

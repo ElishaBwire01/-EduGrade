@@ -1,4 +1,4 @@
-"""
+﻿"""
 EduGrade System Health Check
 Run this script to verify all components are working correctly
 """
@@ -13,7 +13,8 @@ django.setup()
 
 from django.apps import apps
 from django.db import connection
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
+User = get_user_model()
 from django.core.management import call_command
 
 # Import all models to check
